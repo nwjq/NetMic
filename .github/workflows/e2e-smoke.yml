@@ -1,0 +1,60 @@
+name: e2e-smoke
+
+on:
+  workflow_dispatch:
+
+env:
+  HUB_URL: ${{ vars.NETMIC_HUB_URL || 'http://192.168.11.2:7788' }}
+  SESSION_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  coord:
+    runs-on: [self-hosted, linux, netmic-linux]
+    outputs:
+      session_id: ${{ steps.session.outputs.session_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hub 健康检查
+        run: python3 scripts/e2e_smoke.py --mode health --hub "$HUB_URL"
+      - name: 创建会话
+        id: session
+        run: |
+          echo "session_id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+          python3 scripts/e2e_smoke.py \
+            --mode coord \
+            --hub "$HUB_URL" \
+            --agent-id "linux-coord" \
+            --session-id "$SESSION_ID" \
+            --role "coord"
+
+  linux:
+    needs: coord
+    runs-on: [self-hosted, linux, netmic-linux]
+    steps:
+      - uses: actions/checkout@v4
+      - name: 加入会话并等待 macOS
+        run: |
+          python3 scripts/e2e_smoke.py \
+            --mode join \
+            --hub "$HUB_URL" \
+            --agent-id "linux-runner" \
+            --session-id "${{ needs.coord.outputs.session_id }}" \
+            --role "linux" \
+            --peer-role "macos" \
+            --timeout 180
+
+  macos:
+    needs: coord
+    runs-on: [self-hosted, macos, netmic-macos]
+    steps:
+      - uses: actions/checkout@v4
+      - name: 加入会话并等待 Linux
+        run: |
+          python3 scripts/e2e_smoke.py \
+            --mode join \
+            --hub "$HUB_URL" \
+            --agent-id "macos-runner" \
+            --session-id "${{ needs.coord.outputs.session_id }}" \
+            --role "macos" \
+            --peer-role "linux" \
+            --timeout 180
