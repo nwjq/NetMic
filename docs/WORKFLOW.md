@@ -68,24 +68,14 @@ CI 结果写入 GitHub；Hub 只存短期事件
 
 ## 5. Agent Skill 触发点（Playbook）
 
-> 以下是“何时用什么 skill”的标准动作。
+> 不使用 Notion 时，以下仅保留与 GitHub 相关的技能触发点。
 
-### 5.1 规格 → 任务拆解
-**使用**：`notion-spec-to-implementation`  
-**产出**：任务拆分清单（按 Milestone / Module）  
-**写入**：GitHub Issues/Project
-
-### 5.2 技术调研与可选项对比
-**使用**：`notion-research-documentation`  
-**产出**：技术选型记录（利弊、推荐）  
-**写入**：`docs/DECISIONS.md`（后续建立）
-
-### 5.3 CI 失败自动修复
+### 5.1 CI 失败自动修复
 **使用**：`gh-fix-ci`  
 **产出**：修复 PR 或直接提交修复 commit  
 **写入**：GitHub PR/Commit
 
-### 5.4 处理 PR 评论
+### 5.2 处理 PR 评论
 **使用**：`gh-address-comments`  
 **产出**：逐条回应与修复提交  
 **写入**：PR 评论与 commit
@@ -118,4 +108,3 @@ E2E 结果记录在 GitHub Actions，日志作为 artifact 存档。
 - 每日固定一个 “合并窗口”（Integrator）
 - 每次合并必须有最小测试（即使是 smoke）
 - 每周复盘：延迟/丢包/稳定性目标是否满足
-

@@ -16,7 +16,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 4) 运行 5 分钟无中断  
 
 **Skill 建议**  
-若涉及技术对比/命令差异：`notion-research-documentation`
+无（不使用 Notion，调研结论直接记录到文档/Issue）
 
 ---
 
@@ -33,7 +33,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 5) 写入虚拟麦克风  
 
 **Skill 建议**  
-规格拆任务：`notion-spec-to-implementation`
+无（任务直接在 GitHub Issues 中维护）
 
 ---
 
@@ -48,7 +48,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 3) 状态回显与日志  
 
 **Skill 建议**  
-复杂决策/参数对比：`notion-research-documentation`
+无（参数决策写入文档/Issue）
 
 ---
 
@@ -84,4 +84,3 @@ CI 失败修复：`gh-fix-ci`
 - M1：默认参数端到端跑通  
 - M2：参数可调 + 自动回退  
 - M3：稳定性与恢复达标
-
