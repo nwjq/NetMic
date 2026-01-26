@@ -5,6 +5,8 @@ description: NetMic GUI/UX 设计规范与 Tauri 交互准则。用于设计界�
 
 # NetMic GUI/UX + Tauri 交互规范
 
+> 本技能综合原 netmic-gui-ux 与 tauri 技能要点，统一为中文规范。
+
 ## 适用场景
 - 设计或改造 GUI 页面与交互
 - 新增配置项、状态指标、日志页面
@@ -29,6 +31,8 @@ description: NetMic GUI/UX 设计规范与 Tauri 交互准则。用于设计界�
 - 断线与错误必须有清晰提示
 
 ## Tauri 交互原则
+- **架构理解**：Core 进程（Rust）+ WebView 进程（UI），最小权限原则  
+- **IPC 语义**：`command`=请求/响应，`event`=单向通知  
 - **命令接口**：`start/stop/status` 为最小必备命令  
 - **状态管理**：使用全局 `State` 保存连接与配置  
 - **事件流**：指标通过事件推送 UI，避免高频轮询  
@@ -37,4 +41,3 @@ description: NetMic GUI/UX 设计规范与 Tauri 交互准则。用于设计界�
 ## 动效与反馈
 - 页面进入使用轻量过渡  
 - 指标区刷新有节奏感，避免闪烁
-
