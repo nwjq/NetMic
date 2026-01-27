@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(02:25+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=186），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(02:25+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(02:25+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M1-001-protocol-doc` 与 `M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(02:25+08): 真实 Runner 缺少 `sox`，导致 `M0-virtual-mic-20260128-3` 5 分钟持续写入验证持续阻塞。
+- NEXT(02:25+08): 继续推动 builder-linux 安装 sox 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300` 并回写结论；同时推动 builder-mac 认领 `M1-003-client-capture-sender`。
+- TEST(02:25+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(02:20+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=180），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(02:20+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(02:20+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 已被 builder-linux 认领，`M1-001-protocol-doc` 与 `M1-003-client-capture-sender` 仍 queued。
