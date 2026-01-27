@@ -2,13 +2,47 @@
 # Linux 音频注入自检：检查 PipeWire/Pulse 兼容层是否可用于创建虚拟麦克风。
 set -euo pipefail
 
+usage() {
+  printf '%s\n' "用法："
+  printf '%s\n' "  scripts/linux/audio_selfcheck.sh [--smoke] [--json]"
+  printf '%s\n' ""
+  printf '%s\n' "说明："
+  printf '%s\n' "  --smoke  尝试创建临时虚拟麦克风，验证模块可用性"
+  printf '%s\n' "  --json   以 machine-readable JSON 输出关键结论（日志转为 stderr）"
+}
+
 SMOKE=0
-if [[ "${1:-}" == "--smoke" ]]; then
-  SMOKE=1
-fi
+JSON=0
+for arg in "${@:-}"; do
+  case "$arg" in
+    --smoke)
+      SMOKE=1
+      ;;
+    --json)
+      JSON=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf '未知参数：%s\n' "$arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 SMOKE_SINK_ID=""
 SMOKE_SOURCE_ID=""
+PACTL_AVAILABLE=0
+SERVER_NAME=""
+SERVER_KIND="unknown"
+DEFAULT_SINK=""
+DEFAULT_SOURCE=""
+SMOKE_OK="null"
+CONCLUSION=""
+REASON=""
 
 smoke_cleanup() {
   # 使用默认展开，避免 set -u 在未绑定变量时退出。
@@ -23,6 +57,10 @@ smoke_cleanup() {
 }
 
 log() {
+  if [[ "$JSON" -eq 1 ]]; then
+    printf '%s\n' "$*" >&2
+    return 0
+  fi
   printf '%s\n' "$*"
 }
 
@@ -46,6 +84,14 @@ detect_server_name() {
   pactl info 2>/dev/null | awk -F': ' '/^Server Name:/ {print $2; exit}'
 }
 
+detect_default_sink() {
+  pactl info 2>/dev/null | awk -F': ' '/^Default Sink:/ {print $2; exit}'
+}
+
+detect_default_source() {
+  pactl info 2>/dev/null | awk -F': ' '/^Default Source:/ {print $2; exit}'
+}
+
 server_kind_from_name() {
   local name="$1"
   if [[ "$name" == *"PipeWire"* ]] || [[ "$name" == *"on PipeWire"* ]]; then
@@ -59,19 +105,48 @@ server_kind_from_name() {
   printf 'unknown'
 }
 
+json_escape() {
+  local raw="$1"
+  raw="${raw//\\/\\\\}"
+  raw="${raw//\"/\\\"}"
+  raw="${raw//$'\n'/ }"
+  printf '%s' "$raw"
+}
+
+emit_json() {
+  local pactl_available_json=false
+  local smoke_requested_json=false
+  if [[ "$PACTL_AVAILABLE" -eq 1 ]]; then
+    pactl_available_json=true
+  fi
+  if [[ "$SMOKE" -eq 1 ]]; then
+    smoke_requested_json=true
+  fi
+
+  printf '%s\n' "{\"ok\":true,\"pactl_available\":$pactl_available_json,\"server_name\":\"$(json_escape "$SERVER_NAME")\",\"server_type\":\"$(json_escape "$SERVER_KIND")\",\"default_sink\":\"$(json_escape "$DEFAULT_SINK")\",\"default_source\":\"$(json_escape "$DEFAULT_SOURCE")\",\"smoke_requested\":$smoke_requested_json,\"smoke_ok\":$SMOKE_OK,\"conclusion\":\"$(json_escape "$CONCLUSION")\",\"reason\":\"$(json_escape "$REASON")\"}"
+}
+
 basic_checks() {
-  require_cmd pactl || return 1
-  local server_name
-  server_name="$(detect_server_name || true)"
-  if [[ -z "$server_name" ]]; then
+  if command -v pactl >/dev/null 2>&1; then
+    PACTL_AVAILABLE=1
+  else
+    REASON="缺少命令：pactl"
+    log_fail "$REASON"
+    return 1
+  fi
+
+  SERVER_NAME="$(detect_server_name || true)"
+  DEFAULT_SINK="$(detect_default_sink || true)"
+  DEFAULT_SOURCE="$(detect_default_source || true)"
+  if [[ -z "$SERVER_NAME" ]]; then
+    REASON="无法通过 pactl 读取服务端信息（Pulse/PipeWire 可能未运行）。"
     log_fail "无法通过 pactl 读取服务端信息（Pulse/PipeWire 可能未运行）。"
     return 1
   fi
 
-  local server_kind
-  server_kind="$(server_kind_from_name "$server_name")"
-  log "检测到音频服务：$server_name"
-  case "$server_kind" in
+  SERVER_KIND="$(server_kind_from_name "$SERVER_NAME")"
+  log "检测到音频服务：$SERVER_NAME"
+  case "$SERVER_KIND" in
     pipewire-pulse)
       log "服务类型判断：PipeWire（Pulse 兼容层）"
       ;;
@@ -102,6 +177,7 @@ smoke_check_virtual_source() {
     "sink_name=${sink_name}" \
     "sink_properties=device.description=NetMic_Smoke_Sink" 2>/dev/null || true)"
   if [[ -z "$SMOKE_SINK_ID" ]]; then
+    REASON="无法加载 module-null-sink（缺少模块或服务端拒绝）。"
     log_fail "无法加载 module-null-sink（缺少模块或服务端拒绝）。"
     return 1
   fi
@@ -111,35 +187,62 @@ smoke_check_virtual_source() {
     "source_name=${source_name}" \
     "source_properties=device.description=NetMic_Smoke_Source" 2>/dev/null || true)"
   if [[ -z "$SMOKE_SOURCE_ID" ]]; then
+    REASON="无法加载 module-remap-source（虚拟 source 创建失败）。"
     log_fail "无法加载 module-remap-source（虚拟 source 创建失败）。"
     return 1
   fi
 
   if pactl list short sources 2>/dev/null | awk '{print $2}' | grep -Fx "$source_name" >/dev/null 2>&1; then
+    REASON=""
     log "smoke 检查通过：可创建虚拟麦克风（临时 source 已出现）。"
     return 0
   fi
 
+  REASON="smoke 检查失败：未在 sources 列表中看到临时虚拟麦克风。"
   log_fail "smoke 检查失败：未在 sources 列表中看到临时虚拟麦克风。"
   return 1
 }
 
 main() {
   if ! basic_checks; then
+    CONCLUSION="NOT_READY"
+    if [[ -z "$REASON" ]]; then
+      REASON="基础检查未通过"
+    fi
     log "结论：NOT_READY（基础检查未通过）"
+    if [[ "$JSON" -eq 1 ]]; then
+      emit_json
+    fi
     return 1
   fi
 
   if [[ "$SMOKE" -eq 1 ]]; then
     if smoke_check_virtual_source; then
+      SMOKE_OK=true
+      CONCLUSION="READY"
       log "结论：READY（smoke 检查通过）"
+      if [[ "$JSON" -eq 1 ]]; then
+        emit_json
+      fi
       return 0
     fi
+    SMOKE_OK=false
+    CONCLUSION="NOT_READY"
+    if [[ -z "$REASON" ]]; then
+      REASON="smoke 检查失败"
+    fi
     log "结论：NOT_READY（smoke 检查失败）"
+    if [[ "$JSON" -eq 1 ]]; then
+      emit_json
+    fi
     return 1
   fi
 
+  CONCLUSION="CHECK_OK"
   log "结论：CHECK_OK（基础检查通过，建议使用 --smoke 进一步验证）"
+  if [[ "$JSON" -eq 1 ]]; then
+    emit_json
+  fi
 }
 
 main "$@"
