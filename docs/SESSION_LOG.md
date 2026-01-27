@@ -114,3 +114,7 @@
 - DONE(01:28+08): Hub 任务快照出现新推进：`M2-001-config-validation` 已由 `builder-linux` 认领（task.claim event_id=113）；`M0-virtual-mic-20260128-2/-3` 仍 queued。
 - NEXT(01:28+08): 保持 M0 真实 Runner 验证主线，优先推动 `M0-virtual-mic-20260128-2`（create/status/remove 幂等）与 `-3`（5 分钟 smoke）被认领并回写 module/source 关键信息。
 - TEST(01:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
+- DONE(01:27+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`、sources of truth 检查与 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），并确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:28+08): 通过 Hub claim+release+task_update 刷新任务队列：强化 `M0-virtual-mic-20260128-2/-3` 的目标/验收与摘要；将已被吸收的 `M0-virtual-mic-20260127-{1,2,3}` 与 `M0-001-linux-audio-selfcheck` 标记为 `superseded`，避免重复认领。
+- NEXT(01:28+08): builder-linux 优先在真实 Runner 上认领并完成 `M0-virtual-mic-20260128-2`（幂等链路 + module id/source）与 `M0-virtual-mic-20260128-3`（5 分钟 smoke），并回写 SESSION_LOG；同时关注 `M2-001-config-validation` 的 claimed 进度是否需要解卡。
+- TEST(01:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`；以及针对任务刷新/收敛的 `claim_task` + `release_task` + `task_update`（均成功返回 ok/event_id）。
