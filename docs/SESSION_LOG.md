@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(02:59+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=222）。
+- DONE(02:59+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(02:59+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 sox，已尝试 apt-get 但无 sudo 权限），`M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(02:59+08): 真实 Runner 仍缺少 `sox`，`M0-virtual-mic-20260128-3` 5 分钟持续写入验证继续阻塞。
+- NEXT(02:59+08): 推动 builder-linux 获取 sox 安装权限后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300` 并回写结论；同时推动 builder-mac 认领 `M1-003-client-capture-sender`。
+- TEST(02:59+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/{tasks,events}"`。
 - DONE(02:54+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=215），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(02:54+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(02:54+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M1-003-client-capture-sender` 仍 queued。
@@ -327,3 +333,7 @@
 - BLOCKER(02:55+08): `sox` 仍缺失导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证无法完成。
 - NEXT(02:55+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
 - TEST(02:55+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(02:59+08): 真实 Linux Runner 执行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；虚拟 sink/source 创建成功并检测到 source（netmic_smoke_source_224777），完成创建与写入尝试流程。
+- BLOCKER(02:59+08): 环境缺少 `sox`，测试音生成失败导致 5 分钟持续写入验证未完成。
+- NEXT(02:59+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
+- TEST(02:59+08): 运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；输出 `FAIL: 缺少命令：sox` / `WARN: 缺少 sox 或生成测试音失败`。
