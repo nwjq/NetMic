@@ -572,3 +572,6 @@
 - BLOCKER(05:03+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
 - NEXT(05:03+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
 - TEST(05:03+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
+- BLOCKER(05:08+08): 当前无 target_role=builder-linux 的 queued 任务；Hub 仅有 `M1-client-cpal-capture-20260128-1`（builder-mac）待领取。
+- NEXT(05:08+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:08+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
