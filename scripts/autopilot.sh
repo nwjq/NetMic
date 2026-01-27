@@ -7,7 +7,8 @@ STATE_DIR="$ROOT/.autopilot"
 LOG_DIR="$STATE_DIR/logs"
 
 HUB_PORT="${HUB_PORT:-7788}"
-HUB_URL_FILE="${HUB_URL_FILE:-$STATE_DIR/hub_url.txt}"
+HUB_URL_FILE="${HUB_URL_FILE:-$STATE_DIR/runtime_hub_url.txt}"
+HUB_URL_TRACKED_FILE="${HUB_URL_TRACKED_FILE:-$STATE_DIR/hub_url.txt}"
 HUB_URL_SHARED_FILE="${HUB_URL_SHARED_FILE:-$ROOT/docs/HUB_URL.txt}"
 HUB_URL="${HUB_URL:-}"
 LOOP_SLEEP_SECONDS="${LOOP_SLEEP_SECONDS:-180}"
@@ -110,6 +111,13 @@ resolve_hub_url() {
       return 0
     fi
   fi
+  if [[ -f "$HUB_URL_TRACKED_FILE" ]]; then
+    HUB_URL="$(head -n 1 "$HUB_URL_TRACKED_FILE" | tr -d '[:space:]')"
+    if [[ -n "$HUB_URL" ]]; then
+      printf "%s\n" "$HUB_URL" >"$HUB_URL_FILE"
+      return 0
+    fi
+  fi
   if [[ -f "$HUB_URL_SHARED_FILE" ]]; then
     HUB_URL="$(head -n 1 "$HUB_URL_SHARED_FILE" | tr -d '[:space:]')"
     if [[ -n "$HUB_URL" ]]; then
@@ -157,10 +165,7 @@ start_hub_if_needed() {
   echo "Starting local Agent Hub at $HUB_URL"
   local port
   port="$(extract_port "$HUB_URL")"
-  (
-    cd "$ROOT"
-    AGENT_HUB_PORT="$port" python3 agent-hub/agent_hub.py >>"$LOG_DIR/hub.log" 2>&1
-  ) &
+  AGENT_HUB_PORT="$port" python3 agent-hub/agent_hub.py >>"$LOG_DIR/hub.log" 2>&1 &
   echo $! >"$STATE_DIR/hub.pid"
   # Give the hub a moment to come up.
   sleep 1
@@ -189,11 +194,21 @@ agent_loop_script() {
 set -euo pipefail
 cd "$ROOT"
 export HUB="$HUB_URL" ROLE="$role" SESSION_LABEL="$SESSION_LABEL"
+
+cleanup_children() {
+  local children
+  children="\$(ps -o pid= --ppid \$\$ 2>/dev/null || true)"
+  if [[ -n "\${children// }" ]]; then
+    kill \$children >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_children EXIT INT TERM
+
 iter=0
 while true; do
   iter=\$((iter+1))
   echo "[\$(date -Iseconds)] role=$role iter=\$iter" >>"$log_file"
-  scripts/agent_bootstrap.sh >>"$log_file" 2>&1 || true
+  BOOTSTRAP_CONTEXT_ONLY=1 scripts/agent_bootstrap.sh --context >>"$log_file" 2>&1 || true
   codex exec ${CODEX_FLAGS[*]} -o "$last_file" --json <"$prompt_file" >>"$log_file" 2>&1 || true
   if [[ "$AGENT_ITERATIONS" -gt 0 && "\$iter" -ge "$AGENT_ITERATIONS" ]]; then
     exit 0
@@ -209,7 +224,11 @@ EOF
   fi
 
   echo "Starting role=$role"
-  "$loop_file" >>"$log_file" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$loop_file" >>"$log_file" 2>&1 &
+  else
+    "$loop_file" >>"$log_file" 2>&1 &
+  fi
   echo $! >"$pid_file"
 }
 
@@ -251,9 +270,64 @@ stop_pid_file() {
   pid="$(cat "$pid_file" 2>/dev/null || echo "")"
   if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
     echo "Stopping $name (pid $pid)"
-    kill "$pid" >/dev/null 2>&1 || true
+    local pgid
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -n "$pgid" && "$pgid" == "$pid" ]]; then
+      # setsid 启动时，pgid == pid，可直接杀进程组，避免遗留子进程。
+      kill -- "-$pgid" >/dev/null 2>&1 || true
+    else
+      kill "$pid" >/dev/null 2>&1 || true
+      local children
+      children="$(ps -o pid= --ppid "$pid" 2>/dev/null || true)"
+      if [[ -n "${children// }" ]]; then
+        kill $children >/dev/null 2>&1 || true
+      fi
+    fi
   fi
   rm -f "$pid_file"
+}
+
+kill_stray_processes() {
+  # 兜底清理：即使 pid 文件缺失，也尽量停掉 autopilot 循环与 codex 子进程。
+  local loop_pids
+  loop_pids="$(
+    ps -ef | awk -v root="$ROOT" '
+      index($0, root"/.autopilot/") > 0 && $0 ~ /\.loop\.sh/ {print $2}
+    '
+  )"
+  if [[ -n "${loop_pids:-}" ]]; then
+    echo "Stopping stray loop scripts: $loop_pids"
+    kill -9 $loop_pids >/dev/null 2>&1 || true
+  fi
+
+  local codex_pids
+  codex_pids="$(
+    ps -ef | awk -v root="$ROOT" '
+      index($0, "codex exec") > 0 &&
+      index($0, "--full-auto") > 0 &&
+      index($0, "-C " root) > 0 {print $2}
+    '
+  )"
+  if [[ -n "${codex_pids:-}" ]]; then
+    echo "Stopping stray codex exec: $codex_pids"
+    kill -9 $codex_pids >/dev/null 2>&1 || true
+  fi
+
+  # 兜底停止 Hub：杀掉监听 HUB 端口的进程（避免 pid 文件缺失时遗留 hub）。
+  if command -v ss >/dev/null 2>&1 && [[ -n "${HUB_URL:-}" ]]; then
+    local port
+    port="$(extract_port "$HUB_URL")"
+    local hub_pids
+    hub_pids="$(
+      ss -ltnp "( sport = :$port )" 2>/dev/null \
+        | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' \
+        | sort -u
+    )"
+    if [[ -n "${hub_pids:-}" ]]; then
+      echo "Stopping listeners on port $port: $hub_pids"
+      kill -9 $hub_pids >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 status() {
@@ -299,10 +373,12 @@ start() {
 }
 
 stop() {
+  resolve_hub_url
   stop_pid_file "orchestrator"
   stop_pid_file "builder-linux"
   stop_pid_file "scribe"
   stop_pid_file "hub"
+  kill_stray_processes
 }
 
 main() {

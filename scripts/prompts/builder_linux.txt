@@ -6,7 +6,7 @@ Context:
 - Goal: implement Linux-side MVP milestones (virtual mic, server, injection, tests).
 
 Loop checklist:
-1) Run `scripts/agent_bootstrap.sh`.
+1) Run `scripts/agent_bootstrap.sh --context`.
 2) Register to the hub (idempotent):
    `curl -s "$HUB/v1/register" -H 'content-type: application/json' -d '{"agent_id":"builder-linux","role":"builder-linux","capabilities":{"os":"linux"},"host":"builder-linux","tags":["autopilot"],"status":"online"}'`
 3) Read queued tasks:
@@ -15,11 +15,16 @@ Loop checklist:
 5) Claim it:
    `curl -s "$HUB/v1/claim_task" -H 'content-type: application/json' -d '{"agent_id":"builder-linux","task_id":"<task_id>","meta":<existing_meta>}'`
 6) Execute the objective with tests/validation.
-7) Report status:
+7) If validation passes, make a small, scoped commit:
+   - Use explicit `git add <files>` (no `git add .` / no `git commit -a`).
+   - Commit message should include the task id, e.g. `task(M1-002): add udp receiver skeleton`.
+   - Never commit local state under `.autopilot/` or `agent_hub.db`.
+8) Report status:
    - progress: `POST /v1/task_update`
    - finish: `POST /v1/release_task` with status `done` or `blocked`
-8) Append a short entry to `docs/SESSION_LOG.md` (DONE/BLOCKER/NEXT/TEST).
+9) Append a short entry to `docs/SESSION_LOG.md` (DONE/BLOCKER/NEXT/TEST).
 
 Constraints:
 - Keep changes small and verifiable.
 - Prefer scripts and docs that reduce future context needs.
+- If you change protocol/config/IPC contracts, update the relevant docs in the same change.

@@ -1,0 +1,15 @@
+# NetMic 本地自动驾驶状态（不应进入版本控制）
+.autopilot/*.pid
+.autopilot/*.loop.sh
+.autopilot/*.prompt.txt
+.autopilot/*.last.txt
+.autopilot/logs/
+.autopilot/runner.env
+.autopilot/runtime_hub_url.txt
+.autopilot/workspace_bootstrap.done
+
+# Agent Hub 本地数据库
+agent_hub.db
+
+# Python 临时产物
+__pycache__/

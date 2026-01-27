@@ -21,24 +21,55 @@
 ## 首次初始化（一次性）
 ```bash
 cd /path/to/NetMic
-touch docs/SESSION_LOG.md docs/DECISIONS.md docs/TODO.md
-scripts/agent_bootstrap.sh   # 确认 git/日志/issue 概况
+scripts/agent_bootstrap.sh --once
 ```
+说明：
+- `agent_bootstrap.sh` 会在缺失时自动创建 `docs/SESSION_LOG.md`、`docs/DECISIONS.md`、`docs/TODO.md`。
+- `--once` 适合初始化/自检；日常推荐直接无参运行（前台监督模式）。
 
-## 快速启动（建议在 Linux 节点执行）
-1) 启 Hub：`python3 agent-hub/agent_hub.py`（默认 0.0.0.0:7788）。
-2) 设定内网 Hub 地址（可选）：`export HUB_URL=http://<linux-ip>:7788`  
-   - 若不设置，`scripts/autopilot.sh` 会自动探测本机默认 IP，并写入 `.autopilot/hub_url.txt`。
-   - 若存在 `docs/HUB_URL.txt`，autopilot 会优先读取它（适合跨机器共享同一个 Hub 地址）。
-   - 手动启动角色前，可用：`export HUB_URL=${HUB_URL:-$(cat .autopilot/hub_url.txt 2>/dev/null || echo http://127.0.0.1:7788)}`
-3) tmux 一键布局：`scripts/launch_agents.sh`  
-   - 会创建 tmux session `netmic-agents`：hub / orchestrator / builder-linux / builder-mac / scribe 窗口。
+## 推荐入口（单命令自动驾驶）
+```bash
+cd /path/to/NetMic
+scripts/agent_bootstrap.sh
+```
+该入口会自动完成以下动作（能做就做，做不到会置顶提示）：
+- 解析/回退 Hub 地址（优先 `docs/HUB_URL.txt`，其次本机探测）。
+- 在 Hub 不健康且为本机地址时自动拉起 `agent-hub/agent_hub.py`。
+- 注入任务种子（`scripts/seed_tasks.py`），保证有活可干。
+- 在 cargo 可用时自动创建 Rust 工作区骨架（`scripts/bootstrap/bootstrap_workspace.sh`）。
+- 启动 `scripts/autopilot.sh start`（后台跑 agent 循环），并在前台持续刷新状态。
+- Hub 地址会写入 `.autopilot/runtime_hub_url.txt`（避免污染 Git）；`.autopilot/hub_url.txt` 仅作为只读兼容输入。
+
+重要行为说明：
+- 监督器不会自动退出或 stop；退出用 `Ctrl+C`，停止后台进程用：
+  - `scripts/agent_bootstrap.sh --stop`
+- 如果出现权限/安全/依赖阻塞，监督器会在控制台顶部提示“需要用户处理的事项”，并持续轮询状态。
+- 若存在关键阻塞项（例如缺少 cargo、codex 未登录），监督器会暂停启动 autopilot，避免产生不可控改动；解决后重跑即可。
+
+## 跨机配置（可选，但想全自动建议配置）
+为避免每次手动 export，监督器会自动读取：
+- `.autopilot/runner.env`（本机私有配置）
+
+建议做法：
+```bash
+cp .autopilot/runner.env.example .autopilot/runner.env
+```
+然后按需填写：
+- `HUB_URL=http://<linux-ip>:7788`
+- `BUILDER_MAC_SSH=user@mac-runner-host`
+- `BUILDER_MAC_ROOT=/path/to/NetMic`
+
+## 手动模式（需要更细控制时）
+若你不想使用监督器入口，也可以按传统方式手动启动：
+1) 启 Hub：`python3 agent-hub/agent_hub.py`
+2) 启 autopilot：`scripts/autopilot.sh start|status|stop`
+3) 或使用 tmux 布局：`scripts/launch_agents.sh`
 4) 在各窗口（或各机器）启动 Codex：
    - Linux: `HUB=$HUB_URL ROLE=orchestrator scripts/start_agent.sh`
    - Linux: `HUB=$HUB_URL ROLE=builder-linux scripts/start_agent.sh`
    - Mac   : `HUB=$HUB_URL ROLE=builder-mac scripts/start_agent.sh`
    - 任意 : `HUB=$HUB_URL ROLE=scribe scripts/start_agent.sh`
-   （若 `codex` 已登录同一账号，可直接运行；否则先登录。）
+（监督器与手动模式可以混用，但请避免重复拉起过多 agent 循环。）
 
 ## 一键自动驾驶（推荐）
 当你不想手动起多个窗口时，直接用单脚本：
@@ -75,6 +106,7 @@ scripts/autopilot.sh start
 - Hub tasks：`curl "$HUB_URL/v1/tasks?limit=50"`
 - 事件流：`curl "$HUB_URL/v1/events?since=0&limit=5"` 查看最近事件。
 - agent 前置信息：`scripts/agent_bootstrap.sh`。
+- 若当前环境无法访问/监听 `:7788`，监督器会在顶部提示阻塞项；`--context` 模式会跳过 Hub 详情，但仍输出本地文档摘要。
 - 若某角色崩溃，直接在对应 tmux 窗口重跑 `HUB=... ROLE=... scripts/start_agent.sh`。
 
 ## 故障与重启

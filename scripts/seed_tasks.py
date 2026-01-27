@@ -79,7 +79,7 @@ SEED_TASKS: List[SeedTask] = [
         "meta": {
             "target_role": "builder-linux",
             "milestone": "M0",
-            "objective": "新增虚拟麦克风创建/移除脚本（pactl + module-virtual-source），输出 source 名称与 id。",
+            "objective": "新增虚拟麦克风创建/移除脚本（pactl + module-null-sink + module-remap-source），输出 source 名称与 id。",
             "acceptance": [
                 "存在 scripts/linux/virtual_mic.sh（或同等脚本）支持 create/remove/status",
                 "create 后能用 pactl list short sources 看到目标虚拟 source",
@@ -96,7 +96,7 @@ SEED_TASKS: List[SeedTask] = [
             "objective": "实现测试音持续写入链路（sine wave → 虚拟麦克风），并提供 5 分钟 smoke 入口。",
             "acceptance": [
                 "存在可配置时长的写入脚本（例如 scripts/linux/virtual_mic_smoke.sh）",
-                "默认参数为 48k/mono/20ms，符合 MVP 默认值",
+                "默认测试音参数为 48k/mono/16-bit，贴近内部标准格式",
                 "提供最小 stub/自测路径（无 pactl 时能明确返回 NOT_READY）并记录到 SESSION_LOG",
             ],
             "doc_refs": ["MVP.md#9", "docs/ROADMAP.md#milestone-0"],

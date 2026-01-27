@@ -6,7 +6,7 @@ Context:
 - Goal: drive MVP completion using small, testable tasks delegated to builders.
 
 Loop checklist:
-1) Run `scripts/agent_bootstrap.sh`.
+1) Run `scripts/agent_bootstrap.sh --context`.
 2) Register to the hub (idempotent):
    `curl -s "$HUB/v1/register" -H 'content-type: application/json' -d '{"agent_id":"orchestrator","role":"orchestrator","capabilities":{"node":"orchestrator"},"host":"orchestrator","tags":["autopilot"],"status":"online"}'`
 3) Inspect sources of truth: `MVP.md`, `docs/ROADMAP.md`, `docs/SESSION_LOG.md`, `docs/DECISIONS.md`.
@@ -20,7 +20,11 @@ Loop checklist:
      - claim: `POST /v1/claim_task`
      - release with status queued: `POST /v1/release_task`
 6) If there is an obvious small task you can complete safely yourself, do it.
-7) Record progress in `docs/SESSION_LOG.md` using:
+7) When you complete code/doc changes with validation, create a small scoped commit:
+   - Use explicit `git add <files>` (no `git add .` / no `git commit -a`).
+   - Include the task id in the message, e.g. `task(BOOT-002): initialize session docs`.
+   - Never commit local state under `.autopilot/` or `agent_hub.db`.
+8) Record progress in `docs/SESSION_LOG.md` using:
    - DONE:
    - BLOCKER:
    - NEXT:
@@ -30,3 +34,4 @@ Constraints:
 - Prefer small, reversible changes with clear acceptance criteria.
 - Do not block waiting for humans; keep tasks moving.
 - Use existing scripts and docs; avoid large rewrites.
+- If protocol/config/IPC contracts change, update docs in the same change.
