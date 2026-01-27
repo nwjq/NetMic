@@ -42,7 +42,7 @@ fn main() -> Result<()> {
     let socket = bind_udp_socket(&bind_addr)?;
 
     info!(%bind_addr, "udp receiver skeleton ready");
-    run_receiver_loop(&socket)
+    run_receiver_loop(&socket, &params)
 }
 
 fn init_tracing() {
@@ -73,9 +73,9 @@ fn bind_udp_socket(bind_addr: &str) -> Result<UdpSocket> {
     Ok(socket)
 }
 
-fn run_receiver_loop(socket: &UdpSocket) -> Result<()> {
+fn run_receiver_loop(socket: &UdpSocket, params: &SessionParams) -> Result<()> {
     let mut buf = [0_u8; MAX_DATAGRAM_SIZE];
-    let mut ctx = ReceiverContext::new();
+    let mut ctx = ReceiverContext::new(params.sample_rate_hz, params.channels);
 
     loop {
         match socket.recv_from(&mut buf) {
@@ -176,13 +176,13 @@ struct ReceiverContext {
 }
 
 impl ReceiverContext {
-    fn new() -> Self {
+    fn new(sample_rate_hz: u32, channels: u16) -> Self {
         let now = Instant::now();
         Self {
             state: ConnectionState::Idle,
             active_client: None,
             last_packet_at: None,
-            metrics: ReceiverMetrics::new(now),
+            metrics: ReceiverMetrics::new(now, sample_rate_hz, channels),
         }
     }
 
@@ -214,7 +214,7 @@ impl ReceiverContext {
     }
 
     fn on_timeout_tick(&mut self, now: Instant) {
-        self.metrics.on_timeout();
+        self.metrics.on_timeout(now);
         self.update_reconnect_state(now);
     }
 
@@ -276,11 +276,14 @@ struct ReceiverMetrics {
     read_timeouts: u64,
     buffer_depth_frames: usize,
     buffer_target_ms: u64,
+    sample_rate_hz: u32,
+    channels: u16,
+    last_consume_at: Instant,
     last_report_at: Instant,
 }
 
 impl ReceiverMetrics {
-    fn new(now: Instant) -> Self {
+    fn new(now: Instant, sample_rate_hz: u32, channels: u16) -> Self {
         Self {
             packets_total: 0,
             bytes_total: 0,
@@ -292,6 +295,9 @@ impl ReceiverMetrics {
             read_timeouts: 0,
             buffer_depth_frames: 0,
             buffer_target_ms: BUFFER_TARGET_MS,
+            sample_rate_hz,
+            channels,
+            last_consume_at: now,
             last_report_at: now,
         }
     }
@@ -301,7 +307,10 @@ impl ReceiverMetrics {
         self.bytes_total += payload_len as u64;
         match kind {
             DatagramKind::ControlJson => self.control_packets += 1,
-            DatagramKind::AudioPcm16 => self.audio_packets += 1,
+            DatagramKind::AudioPcm16 => {
+                self.audio_packets += 1;
+                self.push_audio_payload(payload_len);
+            }
             DatagramKind::Unknown(_) => self.unknown_packets += 1,
         }
     }
@@ -314,8 +323,9 @@ impl ReceiverMetrics {
         self.busy_rejects += 1;
     }
 
-    fn on_timeout(&mut self) {
+    fn on_timeout(&mut self, now: Instant) {
         self.read_timeouts += 1;
+        self.consume_buffer(now);
     }
 
     fn report_if_due(
@@ -325,6 +335,7 @@ impl ReceiverMetrics {
         active_client: Option<SocketAddr>,
         last_packet_at: Option<Instant>,
     ) {
+        self.consume_buffer(now);
         if now.duration_since(self.last_report_at) < Duration::from_secs(METRICS_REPORT_SECS) {
             return;
         }
@@ -349,5 +360,31 @@ impl ReceiverMetrics {
             "receiver metrics snapshot"
         );
         self.last_report_at = now;
+    }
+
+    fn push_audio_payload(&mut self, payload_len: usize) {
+        let bytes_per_frame = (self.channels.max(1) as usize) * 2;
+        let frames = payload_len / bytes_per_frame;
+        if frames > 0 {
+            self.buffer_depth_frames = self.buffer_depth_frames.saturating_add(frames);
+        }
+    }
+
+    fn consume_buffer(&mut self, now: Instant) {
+        let elapsed = now.saturating_duration_since(self.last_consume_at);
+        if elapsed.is_zero() {
+            return;
+        }
+        let sample_rate_hz = self.sample_rate_hz as u64;
+        if sample_rate_hz == 0 {
+            self.last_consume_at = now;
+            return;
+        }
+        let frames_to_consume =
+            (sample_rate_hz.saturating_mul(elapsed.as_millis() as u64) / 1000) as usize;
+        if frames_to_consume > 0 {
+            self.buffer_depth_frames = self.buffer_depth_frames.saturating_sub(frames_to_consume);
+        }
+        self.last_consume_at = now;
     }
 }
