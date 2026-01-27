@@ -11,8 +11,11 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 
 **任务清单**
 1) 环境自检（pactl / pipewire-pulse）  
+   - 参考脚本：`scripts/linux/audio_selfcheck.sh`（可加 `--smoke`）  
 2) 创建虚拟麦克风（pactl + module-virtual-source）  
+   - 参考脚本：`scripts/linux/virtual_mic_smoke.sh --cleanup-only`  
 3) 持续写入测试音（sine wave）  
+   - 参考脚本：`scripts/linux/virtual_mic_smoke.sh --duration 300`  
 4) 运行 5 分钟无中断  
 
 **Skill 建议**  
