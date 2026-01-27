@@ -1,0 +1,71 @@
+# NetMic 协议草案（MVP 骨架）
+
+本文档描述当前代码骨架中已落地的最小协议结构。
+事实来源：`MVP.md` 第 4/5/8 节。
+
+## 设计边界（MVP）
+- 传输层：UDP
+- 单向音频：Client → Server
+- 单客户端占用：服务端最多 1 个 active sender（冲突返回 BUSY）
+- 控制面与数据面：可复用同端口，但需有明确消息类型
+
+## 会话参数：`SessionParams`
+字段与含义（代码位置：`crates/netmic-proto/src/protocol.rs`）：
+- `codec: String`
+- `sample_rate_hz: u32`
+- `channels: u16`（MVP 固定 1）
+- `chunk_ms: u32`
+- `opus_bitrate_kbps: Option<u32>`
+- `jitter_buffer_ms: u32`
+
+默认值（`SessionParams::mvp_default()`）：
+- codec: opus
+- sample_rate_hz: 48000
+- channels: 1
+- chunk_ms: 20
+- opus_bitrate_kbps: 48
+- jitter_buffer_ms: 100
+
+> 参数安全范围以 `MVP.md` 为准；本结构仅承载数据。
+
+## 控制面消息（结构）
+
+### 握手请求：`HandshakeRequest`
+Client → Server
+- `session_id: String`
+- `client_name: String`
+- `requested: SessionParams`
+- `token: Option<String>`（预留）
+
+### 握手响应：`HandshakeResponse`
+Server → Client
+- `session_id: String`
+- `accepted: bool`
+- `reason: Option<String>`
+- `effective: SessionParams`
+- `busy: bool`
+
+### 心跳：`Heartbeat`
+双向
+- `session_id: String`
+- `seq: u64`
+- `sent_at_ms: u64`
+
+### 统计快照：`StatsSnapshot`
+Server → Client 为主
+- `packets_received: u64`
+- `packets_lost: u64`
+- `jitter_buffer_depth_ms: f32`
+- `estimated_e2e_latency_ms: f32`
+
+## 数据面消息（结构）
+
+### 音频帧头：`AudioFrameHeader`
+- `session_id: String`
+- `seq: u64`
+- `timestamp_ms: u64`
+- `frame_samples: u32`
+
+当前状态：
+- 已定义结构体，但尚未冻结 wire format（编码方式/帧头布局/校验策略）。
+- 后续若新增 datagram 编码/解码规则，需同步更新本文件与 `MVP.md` 的相关约束说明。

@@ -1,0 +1,9 @@
+[package]
+name = "netmic-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+netmic-proto = { path = "../netmic-proto" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
