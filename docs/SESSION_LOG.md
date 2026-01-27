@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(01:58+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=157）完成；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
+- DONE(01:58+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），`.autopilot/research_mode.txt` 不存在。
+- DONE(01:58+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），其余任务保持 done/queued。
+- BLOCKER(01:58+08): 真实 Runner 缺少 `sox`（pactl/paplay 已有），导致 `M0-virtual-mic-20260128-3` 5 分钟持续写入无法完成。
+- NEXT(01:58+08): 协助 builder-linux 在真实 Runner 安装 sox 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，回写稳定性结论并解除阻塞。
+- TEST(01:58+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(01:54+08): orchestrator 清单复跑：Hub `register` 成功（event_id=150）；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
 - DONE(01:54+08): 本轮 `python3 scripts/verify_mvp.py` 初始出现 `netmic-client` 的 `DatagramKind` 识别报错（M1 blocked）；随后运行 `cargo check` 并重跑 `python3 scripts/verify_mvp.py`，M0–M3 全 pass（active=M3），`.autopilot/verify_status.json` 已更新。
 - DONE(01:54+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M3-001-metrics-and-reconnect` 已 done。
@@ -171,3 +177,6 @@
 - BLOCKER(01:56+08): 真实 Runner 缺少 `sox` 导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证仍 blocked；需补依赖后重测。
 - NEXT(01:56+08): 继续推进真实 Runner 补装 sox 并复测 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成后回写 SESSION_LOG/Hub。
 - TEST(01:56+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
+- DONE(01:57+08): 复跑真实 Linux Runner `scripts/linux/virtual_mic_smoke.sh --duration 300`：虚拟 sink/source 创建成功并检测到 source（netmic_smoke_source_155891），但缺少 sox，测试音生成失败，写入被跳过。
+- BLOCKER(01:57+08): 环境缺少 sox（pactl/paplay 可用），导致 5 分钟持续写入无法完成；需安装 sox 后重测。
+- TEST(01:57+08): 执行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；输出包含 `FAIL: 缺少命令：sox` 与 `WARN: 缺少 sox 或生成测试音失败`。
