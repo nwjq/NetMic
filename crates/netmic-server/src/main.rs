@@ -86,7 +86,7 @@ fn run_receiver_loop(socket: &UdpSocket, params: &SessionParams) -> Result<()> {
                     continue;
                 }
                 if let Some((kind, payload)) = split_datagram(packet) {
-                    ctx.metrics.on_datagram(kind, payload.len());
+                    ctx.metrics.on_datagram(kind, payload);
                     match kind {
                         DatagramKind::ControlJson => handle_control_payload(payload, addr),
                         DatagramKind::AudioPcm16 => {
@@ -275,6 +275,9 @@ struct ReceiverMetrics {
     busy_rejects: u64,
     read_timeouts: u64,
     buffer_depth_frames: usize,
+    audio_level_peak: u32,
+    audio_level_sum_squares: u64,
+    audio_level_samples: u64,
     buffer_target_ms: u64,
     sample_rate_hz: u32,
     channels: u16,
@@ -294,6 +297,9 @@ impl ReceiverMetrics {
             busy_rejects: 0,
             read_timeouts: 0,
             buffer_depth_frames: 0,
+            audio_level_peak: 0,
+            audio_level_sum_squares: 0,
+            audio_level_samples: 0,
             buffer_target_ms: BUFFER_TARGET_MS,
             sample_rate_hz,
             channels,
@@ -302,14 +308,14 @@ impl ReceiverMetrics {
         }
     }
 
-    fn on_datagram(&mut self, kind: DatagramKind, payload_len: usize) {
+    fn on_datagram(&mut self, kind: DatagramKind, payload: &[u8]) {
         self.packets_total += 1;
-        self.bytes_total += payload_len as u64;
+        self.bytes_total += payload.len() as u64;
         match kind {
             DatagramKind::ControlJson => self.control_packets += 1,
             DatagramKind::AudioPcm16 => {
                 self.audio_packets += 1;
-                self.push_audio_payload(payload_len);
+                self.push_audio_payload(payload);
             }
             DatagramKind::Unknown(_) => self.unknown_packets += 1,
         }
@@ -339,6 +345,7 @@ impl ReceiverMetrics {
         if now.duration_since(self.last_report_at) < Duration::from_secs(METRICS_REPORT_SECS) {
             return;
         }
+        let (audio_rms, audio_peak) = self.take_audio_level_snapshot();
         let idle_ms = last_packet_at
             .map(|ts| now.duration_since(ts).as_millis() as u64)
             .unwrap_or(0);
@@ -355,6 +362,8 @@ impl ReceiverMetrics {
             read_timeouts = self.read_timeouts,
             buffer_depth_frames = self.buffer_depth_frames,
             buffer_target_ms = self.buffer_target_ms,
+            audio_rms,
+            audio_peak,
             reconnect_window_secs = RECONNECT_WINDOW_SECS,
             idle_ms,
             "receiver metrics snapshot"
@@ -362,12 +371,45 @@ impl ReceiverMetrics {
         self.last_report_at = now;
     }
 
-    fn push_audio_payload(&mut self, payload_len: usize) {
+    fn push_audio_payload(&mut self, payload: &[u8]) {
+        self.push_audio_frames(payload.len());
+        self.accumulate_audio_levels(payload);
+    }
+
+    fn push_audio_frames(&mut self, payload_len: usize) {
         let bytes_per_frame = (self.channels.max(1) as usize) * 2;
         let frames = payload_len / bytes_per_frame;
         if frames > 0 {
             self.buffer_depth_frames = self.buffer_depth_frames.saturating_add(frames);
         }
+    }
+
+    fn accumulate_audio_levels(&mut self, payload: &[u8]) {
+        for chunk in payload.chunks_exact(2) {
+            let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
+            let abs_sample = sample.abs() as u32;
+            if abs_sample > self.audio_level_peak {
+                self.audio_level_peak = abs_sample;
+            }
+            self.audio_level_sum_squares =
+                self.audio_level_sum_squares.saturating_add((sample as i64 * sample as i64) as u64);
+            self.audio_level_samples = self.audio_level_samples.saturating_add(1);
+        }
+    }
+
+    fn take_audio_level_snapshot(&mut self) -> (f32, u32) {
+        let rms = if self.audio_level_samples > 0 {
+            let mean_square =
+                self.audio_level_sum_squares as f64 / self.audio_level_samples as f64;
+            mean_square.sqrt() as f32
+        } else {
+            0.0
+        };
+        let peak = self.audio_level_peak;
+        self.audio_level_peak = 0;
+        self.audio_level_sum_squares = 0;
+        self.audio_level_samples = 0;
+        (rms, peak)
     }
 
     fn consume_buffer(&mut self, now: Instant) {
