@@ -134,6 +134,8 @@ scripts/autopilot.sh start
 常用命令：
 - 查看整体状态（hub/agents/tasks/pids）：`scripts/autopilot.sh status`
 - 停止本机 autopilot 进程：`scripts/autopilot.sh stop`
+- 危险模式：`AUTOPILOT_DANGEROUS=1 scripts/autopilot.sh start`
+  说明：codex CLI 的 `--full-auto` 与 `--dangerously-bypass-approvals-and-sandbox` 互斥；开启危险模式时会自动关闭 `--full-auto`。
 
 可选远程启动 mac builder（需 ssh 免密或可用凭据）：
 

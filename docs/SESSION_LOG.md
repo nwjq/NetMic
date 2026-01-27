@@ -1,6 +1,8 @@
 # SESSION LOG
 
 ## 2026-01-27
+- DONE(00:51+08): 修复 `scripts/autopilot.sh` 在 `AUTOPILOT_DANGEROUS=1` 时同时拼接 `--full-auto` 与 `--dangerously-bypass-approvals-and-sandbox` 的互斥问题；危险模式优先并自动关闭 `--full-auto`，同时更新 stray codex 清理匹配与自动驾驶文档说明。
+- TEST(00:51+08): 运行 `bash -n scripts/autopilot.sh`；用临时 `codex` stub 执行 `AUTOPILOT_DANGEROUS=1 AGENT_ITERATIONS=1 scripts/autopilot.sh start` 后 `scripts/autopilot.sh stop`，确认实际调用仅包含 `--dangerously-bypass-approvals-and-sandbox` 且端口 `:7788` 无残留监听。
 - DONE(21:12+08): 将 `NETMIC_AUTO_INSTALL_RUST` 默认值改为开启（可用 `NETMIC_AUTO_INSTALL_RUST=0` 显式关闭），并同步更新 runner.env.example 与 CONTINUOUS_AUTOPILOT 文档说明。
 - TEST(21:12+08): 使用 `NETMIC_AUTO_INSTALL_RUST=0 scripts/agent_bootstrap.sh --once` 验证脚本路径（避免实际安装），随后 `--stop` 清理 Hub。
 - DONE(21:08+08): 修复 `agent_bootstrap.sh` 的 codex 登录检测（优先 `codex login status`，兼容旧版 `codex auth status`），避免误判为未登录。

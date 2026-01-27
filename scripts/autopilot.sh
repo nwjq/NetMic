@@ -15,9 +15,13 @@ LOOP_SLEEP_SECONDS="${LOOP_SLEEP_SECONDS:-180}"
 AGENT_ITERATIONS="${AGENT_ITERATIONS:-0}" # 0 means infinite loop.
 SESSION_LABEL="${SESSION_LABEL:-autopilot}"
 
-CODEX_FLAGS=(--full-auto -C "$ROOT")
+# codex CLI 中 --full-auto 与 --dangerously-bypass-approvals-and-sandbox 互斥。
+# 约定：危险模式优先；开启后自动关闭 --full-auto。
+CODEX_FLAGS=(-C "$ROOT")
 if [[ "${AUTOPILOT_DANGEROUS:-0}" == "1" ]]; then
   CODEX_FLAGS+=(--dangerously-bypass-approvals-and-sandbox)
+else
+  CODEX_FLAGS+=(--full-auto)
 fi
 
 usage() {
@@ -30,7 +34,7 @@ Env overrides:
   HUB_URL_SHARED_FILE=docs/HUB_URL.txt
   LOOP_SLEEP_SECONDS=180
   AGENT_ITERATIONS=0
-  AUTOPILOT_DANGEROUS=1
+  AUTOPILOT_DANGEROUS=1   # 使用 --dangerously...（会自动关闭 --full-auto）
   BUILDER_MAC_SSH=user@mac-host   # optional; starts builder-mac via ssh
   BUILDER_MAC_ROOT=/path/to/NetMic
 EOF
@@ -304,7 +308,7 @@ kill_stray_processes() {
   codex_pids="$(
     ps -ef | awk -v root="$ROOT" '
       index($0, "codex exec") > 0 &&
-      index($0, "--full-auto") > 0 &&
+      (index($0, "--full-auto") > 0 || index($0, "--dangerously-bypass-approvals-and-sandbox") > 0) &&
       index($0, "-C " root) > 0 {print $2}
     '
   )"
