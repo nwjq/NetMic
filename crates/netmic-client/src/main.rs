@@ -8,6 +8,9 @@ use std::env;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
+mod audio;
+
+use audio::{AudioPipeline, Pcm16Frame};
 use netmic_proto::datagram::{
     wrap_audio_pcm16, wrap_control_json, DatagramKind, DATAGRAM_KIND_AUDIO_PCM16,
     DATAGRAM_KIND_CONTROL_JSON,
@@ -27,6 +30,8 @@ const RECONNECT_WINDOW_SECS: u64 = 10;
 const RECONNECT_BACKOFF_MS: u64 = 500;
 /// 演示发送最多重试次数（占位）。
 const MAX_RECONNECT_ATTEMPTS: usize = 3;
+/// 演示发送帧数（占位）。
+const DEMO_AUDIO_FRAMES: usize = 5;
 /// 指标输出间隔（占位）。
 const METRICS_REPORT_SECS: u64 = 5;
 /// 发送侧缓冲深度（占位，后续接入采集队列）。
@@ -76,11 +81,18 @@ fn send_demo_packets(params: &SessionParams) -> Result<(), String> {
     let socket =
         UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
     let mut ctx = ClientContext::new();
+    let mut pipeline = AudioPipeline::new(params);
 
     ctx.transition_to(ClientConnectionState::Connecting, "start demo send");
 
     for attempt in 0..=MAX_RECONNECT_ATTEMPTS {
-        match send_control_and_audio(&socket, &server_addr, params, &mut ctx.metrics) {
+        match send_control_and_audio(
+            &socket,
+            &server_addr,
+            params,
+            &mut ctx.metrics,
+            &mut pipeline,
+        ) {
             Ok(()) => {
                 ctx.transition_to(ClientConnectionState::Active, "demo datagrams sent");
                 ctx.maybe_report();
@@ -111,19 +123,9 @@ fn build_control_datagram(params: &SessionParams) -> Result<Vec<u8>, serde_json:
 }
 
 /// 构造数据面 datagram（kind=1）。
-fn build_audio_datagram(payload: &[u8]) -> Vec<u8> {
-    wrap_audio_pcm16(payload)
-}
-
-/// 生成一小段 PCM16 占位数据（小端序）。
-fn demo_pcm16_payload() -> Vec<u8> {
-    // 这里用两帧简单样本：0 与 1024（便于在日志中观察长度）。
-    let samples = [0_i16, 1024_i16];
-    let mut buf = Vec::with_capacity(samples.len() * 2);
-    for sample in samples {
-        buf.extend_from_slice(&sample.to_le_bytes());
-    }
-    buf
+fn build_audio_datagram(frame: &Pcm16Frame) -> Vec<u8> {
+    let payload = frame.to_bytes();
+    wrap_audio_pcm16(&payload)
 }
 
 fn send_control_and_audio(
@@ -131,6 +133,7 @@ fn send_control_and_audio(
     server_addr: &str,
     params: &SessionParams,
     metrics: &mut ClientMetrics,
+    pipeline: &mut AudioPipeline,
 ) -> Result<(), String> {
     let control = build_control_datagram(params)
         .map_err(|err| format!("build control datagram failed: {err}"))?;
@@ -145,18 +148,28 @@ fn send_control_and_audio(
         "sent control datagram (json placeholder)"
     );
 
-    let audio_payload = demo_pcm16_payload();
-    let audio = build_audio_datagram(&audio_payload);
-    let audio_len = socket
-        .send_to(&audio, server_addr)
-        .map_err(|err| format!("send audio datagram failed: {err}"))?;
-    metrics.on_send(DatagramKind::AudioPcm16, audio_len);
-    info!(
-        %server_addr,
-        bytes = audio_len,
-        kind = DATAGRAM_KIND_AUDIO_PCM16,
-        "sent audio datagram (pcm16 placeholder)"
-    );
+    for idx in 0..DEMO_AUDIO_FRAMES {
+        let frame = pipeline
+            .next_frame()
+            .map_err(|err| format!("capture/resample failed: {err}"))?;
+        let audio = build_audio_datagram(&frame);
+        let audio_len = socket
+            .send_to(&audio, server_addr)
+            .map_err(|err| format!("send audio datagram failed: {err}"))?;
+        metrics.on_send(DatagramKind::AudioPcm16, audio_len);
+        info!(
+            %server_addr,
+            bytes = audio_len,
+            kind = DATAGRAM_KIND_AUDIO_PCM16,
+            sample_rate_hz = frame.sample_rate_hz,
+            channels = frame.channels,
+            frame_index = idx,
+            "sent audio datagram (pcm16 placeholder)"
+        );
+        if idx + 1 < DEMO_AUDIO_FRAMES {
+            std::thread::sleep(pipeline.frame_interval());
+        }
+    }
 
     Ok(())
 }
@@ -283,9 +296,10 @@ impl ClientMetrics {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_audio_datagram, build_control_datagram, demo_pcm16_payload,
+        build_audio_datagram, build_control_datagram,
         DATAGRAM_KIND_AUDIO_PCM16, DATAGRAM_KIND_CONTROL_JSON,
     };
+    use crate::audio::Pcm16Frame;
     use netmic_proto::datagram::{split_datagram, DatagramKind};
     use netmic_proto::protocol::SessionParams;
 
@@ -302,8 +316,9 @@ mod tests {
 
     #[test]
     fn audio_datagram_prefixes_kind_and_preserves_payload() {
-        let payload = demo_pcm16_payload();
-        let datagram = build_audio_datagram(&payload);
+        let frame = Pcm16Frame::new(vec![0_i16, 1024_i16], 48_000, 1);
+        let payload = frame.to_bytes();
+        let datagram = build_audio_datagram(&frame);
         assert_eq!(datagram.first().copied(), Some(DATAGRAM_KIND_AUDIO_PCM16));
 
         let (kind, split_payload) = split_datagram(&datagram).expect("split audio datagram");

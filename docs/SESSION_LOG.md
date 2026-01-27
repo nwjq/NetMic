@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(03:39+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=246），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(03:39+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(03:39+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M1-client-capture-skeleton-20260128-1` 已 claimed（builder-linux），`M1-003-client-capture-sender` 仍 queued（builder-mac）。
+- BLOCKER(03:39+08): 暂无硬阻塞；当前待 builder-mac 认领并推进 `M1-003-client-capture-sender`，builder-linux 完成 `M1-client-capture-skeleton-20260128-1`。
+- NEXT(03:39+08): 推动 builder-mac 认领并完成 `M1-003-client-capture-sender`；跟进 builder-linux 提交采集/重采样/发送骨架并回写 SESSION_LOG/Hub。
+- TEST(03:39+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(03:27+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=237），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(03:27+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(03:27+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 已 done，`M1-003-client-capture-sender` 仍 queued。
@@ -406,3 +412,6 @@
 - DONE(03:33+08): Hub 任务快照：`M0-virtual-mic-20260128-3` 已 done（5 分钟 smoke 完成，sox 缺失时用 python3 WAV fallback），`M1-003-client-capture-sender` 仍 queued（target_role=builder-mac）。
 - NEXT(03:33+08): 协调 builder-mac 领取 `M1-003-client-capture-sender` 并回写 SESSION_LOG/Hub。
 - TEST(03:33+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(03:38+08): builder-linux 完成 netmic-client 采集/重采样/发送骨架：新增 `audio` 模块输出 PCM16 mono 48k 占位帧，发送循环改用管线输出并按 chunk_ms 发送多帧。
+- NEXT(03:38+08): 如需接入真实采集/重采样（cpal/rubato），在 `crates/netmic-client/src/audio.rs` 替换占位实现即可。
+- TEST(03:38+08): 运行 `cargo check`。
