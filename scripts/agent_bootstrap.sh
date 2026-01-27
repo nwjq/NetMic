@@ -23,6 +23,9 @@ CONTEXT_ONLY="${BOOTSTRAP_CONTEXT_ONLY:-0}"
 ONCE=0
 STATUS_ONLY=0
 STOP_ONLY=0
+# 是否允许脚本自动安装 Rust 工具链（默认开启，可显式设为 0 关闭）。
+AUTO_INSTALL_RUST="${NETMIC_AUTO_INSTALL_RUST:-1}"
+RUSTUP_PROFILE="${NETMIC_RUSTUP_PROFILE:-minimal}"
 
 usage() {
   cat <<'USAGE'
@@ -388,12 +391,58 @@ codex_auth_ok() {
   if ! command -v codex >/dev/null 2>&1; then
     return 1
   fi
-  # codex CLI 不一定提供稳定的状态命令；失败时仅给出提示，不阻塞。
+  # 兼容不同版本的 codex CLI：优先 login status，回退到旧的 auth status。
   if command -v timeout >/dev/null 2>&1; then
+    timeout 5 codex login status >/dev/null 2>&1 && return 0
     timeout 5 codex auth status >/dev/null 2>&1 && return 0
   else
+    codex login status >/dev/null 2>&1 && return 0
     codex auth status >/dev/null 2>&1 && return 0
   fi
+  return 1
+}
+
+ensure_rust_toolchain() {
+  # 先尝试加载 rustup 环境，避免“已安装但 PATH 未生效”的误判。
+  # shellcheck disable=SC1090
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    . "$HOME/.cargo/env"
+  fi
+
+  if command -v cargo >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ "$AUTO_INSTALL_RUST" != "1" ]]; then
+    add_action "缺少 cargo：建议安装 rustup（https://rustup.rs），否则无法构建 Rust MVP。"
+    BLOCK_AUTOPILOT=1
+    return 1
+  fi
+
+  require_cmd_soft curl "自动安装 Rust 工具链依赖 curl。" 1 || return 1
+
+  add_action "检测到缺少 cargo：已启用 NETMIC_AUTO_INSTALL_RUST=1，将尝试通过 rustup 自动安装（profile=$RUSTUP_PROFILE）。"
+
+  # rustup 官方一键安装（非交互）。
+  if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile "$RUSTUP_PROFILE" >>"$BOOTSTRAP_LOG" 2>&1; then
+    # shellcheck disable=SC1090
+    if [[ -f "$HOME/.cargo/env" ]]; then
+      . "$HOME/.cargo/env"
+    fi
+  else
+    add_action "rustup 自动安装失败：请查看 $BOOTSTRAP_LOG"
+    BLOCK_AUTOPILOT=1
+    return 1
+  fi
+
+  if command -v cargo >/dev/null 2>&1; then
+    add_action "rustup 自动安装完成：cargo 已可用。"
+    return 0
+  fi
+
+  add_action "rustup 安装似乎完成但 cargo 仍不可用：请查看 $BOOTSTRAP_LOG，并确认 $HOME/.cargo/env 已生效。"
+  BLOCK_AUTOPILOT=1
   return 1
 }
 
@@ -406,10 +455,7 @@ preflight_checks() {
   require_cmd_soft python3 "用于 Agent Hub 与种子脚本。" 1 || true
   require_cmd_soft codex "用于自动开发与提交（codex CLI）。" 1 || true
 
-  if ! command -v cargo >/dev/null 2>&1; then
-    add_action "缺少 cargo：建议安装 rustup（https://rustup.rs），否则无法构建 Rust MVP。"
-    BLOCK_AUTOPILOT=1
-  fi
+  ensure_rust_toolchain || true
 
   if [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]]; then
     if ! command -v pactl >/dev/null 2>&1; then
@@ -422,7 +468,7 @@ preflight_checks() {
   fi
 
   if command -v codex >/dev/null 2>&1 && ! codex_auth_ok; then
-    add_action "codex 可能尚未登录：请在本机先运行 'codex auth login'（或等效登录命令）。"
+    add_action "codex 可能尚未登录：请在本机先运行 'codex login'（旧版可用 'codex auth login'）。"
     BLOCK_AUTOPILOT=1
   fi
 }

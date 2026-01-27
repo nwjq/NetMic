@@ -58,6 +58,13 @@ cp .autopilot/runner.env.example .autopilot/runner.env
 - `HUB_URL=http://<linux-ip>:7788`
 - `BUILDER_MAC_SSH=user@mac-runner-host`
 - `BUILDER_MAC_ROOT=/path/to/NetMic`
+- `NETMIC_AUTO_INSTALL_RUST=0`（可选：关闭监督器通过 rustup 自动安装 cargo）
+- `NETMIC_RUSTUP_PROFILE=minimal`（可选：rustup profile，默认 minimal）
+
+关于自动安装 Rust：
+- 默认开启；如需关闭可在 `.autopilot/runner.env` 设为 `NETMIC_AUTO_INSTALL_RUST=0`。
+- 开启需确认 Runner 允许联网且允许写入 `$HOME/.cargo`。
+- 启用后，监督器会在检测到缺少 `cargo` 时自动执行 rustup 官方安装脚本，并尝试 `source $HOME/.cargo/env`。
 
 ## 手动模式（需要更细控制时）
 若你不想使用监督器入口，也可以按传统方式手动启动：

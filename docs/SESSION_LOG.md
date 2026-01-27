@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-27
+- DONE(21:12+08): 将 `NETMIC_AUTO_INSTALL_RUST` 默认值改为开启（可用 `NETMIC_AUTO_INSTALL_RUST=0` 显式关闭），并同步更新 runner.env.example 与 CONTINUOUS_AUTOPILOT 文档说明。
+- TEST(21:12+08): 使用 `NETMIC_AUTO_INSTALL_RUST=0 scripts/agent_bootstrap.sh --once` 验证脚本路径（避免实际安装），随后 `--stop` 清理 Hub。
+- DONE(21:08+08): 修复 `agent_bootstrap.sh` 的 codex 登录检测（优先 `codex login status`，兼容旧版 `codex auth status`），避免误判为未登录。
+- DONE(21:08+08): 新增可选自动安装 Rust 工具链开关：`NETMIC_AUTO_INSTALL_RUST=1`（默认关闭），并支持 `NETMIC_RUSTUP_PROFILE`。
+- NEXT(21:08+08): 若希望“完全自动安装 cargo”，在 `.autopilot/runner.env` 设置 `NETMIC_AUTO_INSTALL_RUST=1` 后重跑监督器。
+- TEST(21:08+08): 运行 `scripts/agent_bootstrap.sh --once`（不再出现 codex 未登录提示）；随后运行 `scripts/agent_bootstrap.sh --stop` 清理 Hub 进程。
 - DONE(20:21+08): 以 orchestrator 清单复跑 `scripts/agent_bootstrap.sh --context`；Hub register/agents/tasks 仍 exit=7（本机未监听 7788），改用 `sqlite3 agent_hub.db` 读取任务队列现状。
 - DONE(20:21+08): 刷新 M0 任务种子：在 `scripts/seed_tasks.py` 新增 `M0-virtual-mic-20260127-{1,2,3}`，拆分为结构化自检→虚拟麦克风 create/remove→5 分钟写入 smoke 的小任务链。
 - BLOCKER(20:21+08): 当前环境无法连接 `http://127.0.0.1:7788`，无法通过 Hub 执行 claim/release，仅能离线准备任务与文档。
