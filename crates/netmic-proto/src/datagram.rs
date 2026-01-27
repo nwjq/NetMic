@@ -46,9 +46,32 @@ pub fn split_datagram(buf: &[u8]) -> Option<(DatagramKind, &[u8])> {
     Some((DatagramKind::from_byte(*first), payload))
 }
 
+/// 按“首字节 kind + 剩余 payload”打包 datagram。
+///
+/// 该函数不做额外校验，仅负责 framing，便于 client/server 复用。
+pub fn wrap_datagram(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(1 + payload.len());
+    buf.push(kind);
+    buf.extend_from_slice(payload);
+    buf
+}
+
+/// 打包控制面 JSON datagram（kind=0）。
+pub fn wrap_control_json(payload: &[u8]) -> Vec<u8> {
+    wrap_datagram(DATAGRAM_KIND_CONTROL_JSON, payload)
+}
+
+/// 打包数据面 PCM16 datagram（kind=1）。
+pub fn wrap_audio_pcm16(payload: &[u8]) -> Vec<u8> {
+    wrap_datagram(DATAGRAM_KIND_AUDIO_PCM16, payload)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{split_datagram, DatagramKind};
+    use super::{
+        split_datagram, wrap_audio_pcm16, wrap_control_json, wrap_datagram, DatagramKind,
+        DATAGRAM_KIND_AUDIO_PCM16, DATAGRAM_KIND_CONTROL_JSON,
+    };
 
     #[test]
     fn split_empty_returns_none() {
@@ -78,5 +101,24 @@ mod tests {
         assert_eq!(kind, DatagramKind::Unknown(9));
         assert_eq!(payload, &[1, 2, 3]);
     }
-}
 
+    #[test]
+    fn wrap_datagram_prefixes_kind() {
+        let buf = wrap_datagram(7, &[1, 2, 3]);
+        assert_eq!(buf, vec![7, 1, 2, 3]);
+    }
+
+    #[test]
+    fn wrap_control_json_uses_constant_kind() {
+        let buf = wrap_control_json(b"{}");
+        assert_eq!(buf[0], DATAGRAM_KIND_CONTROL_JSON);
+        assert_eq!(&buf[1..], b"{}");
+    }
+
+    #[test]
+    fn wrap_audio_pcm16_uses_constant_kind() {
+        let buf = wrap_audio_pcm16(&[0x34, 0x12]);
+        assert_eq!(buf[0], DATAGRAM_KIND_AUDIO_PCM16);
+        assert_eq!(&buf[1..], &[0x34, 0x12]);
+    }
+}

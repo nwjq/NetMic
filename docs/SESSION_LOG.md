@@ -73,3 +73,7 @@
 - DONE(01:00+08): Hub 快照：`BOOT-001/002` 已 completed；`M1-002-server-udp-receiver` 仍由 `builder-linux` 认领；`M1-001-protocol-doc` 与 M0/M2/M3 任务保持 queued。
 - NEXT(01:00+08): scribe 侧优先对齐 `M1-001-protocol-doc`（围绕现有 kind 分流占位实现补强协议文档），并持续把门禁状态与 Hub 任务状态写回 `SESSION_LOG`/`TODO`。
 - TEST(01:00+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s \"$HUB/v1/{register,tasks,events}\"`、`scripts/verify_mvp.py`（均成功）。
+- DONE(01:04+08): orchestrator 清单复跑：Hub register 成功；`scripts/verify_mvp.py` 仍为 M0–M3 全 pass；新增任务 `M1-client-kind-framing-20260127-1`（builder-linux，queued）。
+- DONE(01:04+08): 完成 `M1-datagram-wrap-20260127-1`：在 `netmic-proto::datagram` 增加 wrap helper（wrap_datagram / wrap_control_json / wrap_audio_pcm16）并补充单测，降低 client/server framing 漂移风险。
+- NEXT(01:04+08): builder-linux 优先认领 `M1-client-kind-framing-20260127-1`；并继续推进 M0 任务链（自检 → virtual mic → smoke）。
+- TEST(01:04+08): 运行 `cargo test --workspace`（7/7 通过）；运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass）；运行 Hub `agents/tasks` curl（成功返回）。
