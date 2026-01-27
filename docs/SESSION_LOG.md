@@ -81,3 +81,6 @@
 - DONE(01:05+08): Hub 快照更新：`M1-client-kind-framing-20260127-1` 已由 `builder-linux` 认领（claimed）；`M1-002-server-udp-receiver` 与 `M1-datagram-wrap-20260127-1` 保持 done。
 - NEXT(01:05+08): scribe 继续围绕 `M1-001-protocol-doc` 做小步补强，并跟踪 `M1-client-kind-framing-20260127-1` 的验收与回写。
 - TEST(01:05+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(01:08+08): builder-linux 完成 `M1-client-kind-framing-20260127-1`：在 `netmic-client` 复用 `netmic-proto::datagram` 的 wrap helper，新增 kind-framed demo 发送入口（`NETMIC_CLIENT_DEMO_SEND=1`），并补充 2 个单测验证 split_datagram 一致性；提交 `81dac4fc`。
+- NEXT(01:08+08): 在联调环境先运行 `cargo run -p netmic-server`，再用 `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client` 观察服务端控制面/数据面日志分流；随后继续推进 M0 链路（virtual mic smoke）。
+- TEST(01:08+08): 运行 `cargo check`（通过）；运行 `cargo test --workspace`（9/9 通过）；运行 `scripts/verify_mvp.py`（M0–M3 全 pass）。
