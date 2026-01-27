@@ -5,6 +5,7 @@
 - 编排优先：Hub 已可达（`http://192.168.11.1:7788`），orchestrator 应开始 claim/编排并推动任务状态从 queued 前进。
 - 里程碑优先：推进 `M1-003-client-capture-sender`（client 采集/重采样/发送最小骨架），并及时回写 SESSION_LOG。
 - 自动驾驶：运行 `scripts/agent_bootstrap.sh`，观察置顶提示并清除阻塞项。
+- 记录(03:22+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M0-virtual-mic-20260128-3` 已 done（5 分钟写入完成，sox 缺失时改用 python3 生成 WAV），`M1-003-client-capture-sender` 仍 queued。
 - 记录(03:15+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M0-virtual-mic-20260128-3` 已 done（5 分钟 smoke 完成，sox 缺失时有 python3 WAV fallback），`M1-003-client-capture-sender` 仍 queued。
 - 记录(03:10+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M0-virtual-mic-20260128-3` 仍 claimed（builder-linux 缺少 sox），`M1-003-client-capture-sender` 仍 queued。
 - 记录(03:05+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 sox），`M1-003-client-capture-sender` 仍 queued。
