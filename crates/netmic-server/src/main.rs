@@ -6,7 +6,10 @@
 //! - 控制面/数据面解析均为占位实现，后续再接入真实握手/解码/注入。
 
 use std::env;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::{SocketAddr, UdpSocket};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -40,9 +43,10 @@ fn main() -> Result<()> {
     let port = udp_port_from_env();
     let bind_addr = format!("{DEFAULT_BIND_ADDR}:{port}");
     let socket = bind_udp_socket(&bind_addr)?;
+    let audio_sink = audio_sink_from_env()?;
 
     info!(%bind_addr, "udp receiver skeleton ready");
-    run_receiver_loop(&socket, &params)
+    run_receiver_loop(&socket, &params, audio_sink)
 }
 
 fn init_tracing() {
@@ -73,9 +77,13 @@ fn bind_udp_socket(bind_addr: &str) -> Result<UdpSocket> {
     Ok(socket)
 }
 
-fn run_receiver_loop(socket: &UdpSocket, params: &SessionParams) -> Result<()> {
+fn run_receiver_loop(
+    socket: &UdpSocket,
+    params: &SessionParams,
+    audio_sink: Box<dyn AudioSink>,
+) -> Result<()> {
     let mut buf = [0_u8; MAX_DATAGRAM_SIZE];
-    let mut ctx = ReceiverContext::new(params.sample_rate_hz, params.channels);
+    let mut ctx = ReceiverContext::new(params.sample_rate_hz, params.channels, audio_sink);
 
     loop {
         match socket.recv_from(&mut buf) {
@@ -90,6 +98,9 @@ fn run_receiver_loop(socket: &UdpSocket, params: &SessionParams) -> Result<()> {
                     match kind {
                         DatagramKind::ControlJson => handle_control_payload(payload, addr),
                         DatagramKind::AudioPcm16 => {
+                            if let Err(err) = ctx.audio_sink.write_pcm16(payload) {
+                                warn!(%err, "audio sink write failed");
+                            }
                             info!(
                                 %addr,
                                 bytes = payload.len(),
@@ -173,16 +184,18 @@ struct ReceiverContext {
     active_client: Option<SocketAddr>,
     last_packet_at: Option<Instant>,
     metrics: ReceiverMetrics,
+    audio_sink: Box<dyn AudioSink>,
 }
 
 impl ReceiverContext {
-    fn new(sample_rate_hz: u32, channels: u16) -> Self {
+    fn new(sample_rate_hz: u32, channels: u16, audio_sink: Box<dyn AudioSink>) -> Self {
         let now = Instant::now();
         Self {
             state: ConnectionState::Idle,
             active_client: None,
             last_packet_at: None,
             metrics: ReceiverMetrics::new(now, sample_rate_hz, channels),
+            audio_sink,
         }
     }
 
@@ -263,6 +276,71 @@ impl ReceiverContext {
         );
         self.state = next;
     }
+}
+
+trait AudioSink {
+    fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize>;
+}
+
+struct NullSink;
+
+impl AudioSink for NullSink {
+    fn write_pcm16(&mut self, _payload: &[u8]) -> Result<usize> {
+        Ok(0)
+    }
+}
+
+struct FileDumpSink {
+    path: PathBuf,
+    file: std::fs::File,
+    total_bytes: u64,
+}
+
+impl FileDumpSink {
+    fn new(path: PathBuf) -> Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("failed to open audio dump file: {}", path.display()))?;
+        Ok(Self {
+            path,
+            file,
+            total_bytes: 0,
+        })
+    }
+}
+
+impl AudioSink for FileDumpSink {
+    fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize> {
+        self.file
+            .write_all(payload)
+            .with_context(|| format!("failed to append audio dump: {}", self.path.display()))?;
+        self.total_bytes = self
+            .total_bytes
+            .saturating_add(payload.len() as u64);
+        info!(
+            bytes = payload.len(),
+            total_bytes = self.total_bytes,
+            path = %self.path.display(),
+            "audio dump sink appended payload"
+        );
+        Ok(payload.len())
+    }
+}
+
+fn audio_sink_from_env() -> Result<Box<dyn AudioSink>> {
+    let Ok(raw) = env::var("NETMIC_SERVER_AUDIO_DUMP") else {
+        return Ok(Box::new(NullSink));
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Box::new(NullSink));
+    }
+    let path = PathBuf::from(trimmed);
+    let sink = FileDumpSink::new(path)?;
+    info!(path = %sink.path.display(), "NETMIC_SERVER_AUDIO_DUMP enabled");
+    Ok(Box::new(sink))
 }
 
 struct ReceiverMetrics {
