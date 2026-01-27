@@ -121,3 +121,6 @@
 - DONE(01:29+08): scribe 复核 Hub 任务收敛：`M0-001-linux-audio-selfcheck` 与 `M0-virtual-mic-20260127-{1,2,3}` 均已标记为 superseded，避免旧任务重复认领；`M0-virtual-mic-20260128-2/-3` 保持 queued 且 priority=high。
 - NEXT(01:29+08): 将注意力集中在 `M0-virtual-mic-20260128-2/-3` 的真实 Runner 验证回写，同时跟踪 `M2-001-config-validation`（claimed）是否出现阻塞信号。
 - TEST(01:29+08): 运行 `python3 scripts/verify_mvp.py`（pass, active=M3），并抓取 `curl -s "$HUB/v1/tasks?limit=50"` 复核 superseded/priority 变更。
+- DONE(01:30+08): 为 M2 参数校验落地 `netmic-proto::config::normalize_session_params`，新增安全范围常量与回退事件结构，补充单测并在 `docs/ROADMAP.md` 标注当前实现对齐。
+- TEST(01:30+08): 运行 `cargo test -p netmic-proto`（通过）。
+- NEXT(01:30+08): 若需推进真实 Runner 验证，优先认领 `M0-virtual-mic-20260128-2/-3` 并回写 module id/source 与 5 分钟 smoke 结论。
