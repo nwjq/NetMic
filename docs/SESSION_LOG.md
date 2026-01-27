@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(04:49+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=290）。
+- DONE(04:49+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(04:49+08): Hub 快照：`/v1/tasks` 显示 `M3-server-audio-level-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
+- BLOCKER(04:49+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(04:49+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；跟进 builder-linux 完成 `M3-server-audio-level-metrics-20260128-1` 并回写 SESSION_LOG/Hub。
+- TEST(04:49+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
 - DONE(04:45+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=289）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(04:45+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(04:45+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe 在线；`/v1/tasks` 显示 `M3-server-audio-level-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
@@ -548,3 +554,5 @@
 - NEXT(04:42+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，并回写 SESSION_LOG/Hub。
 - NEXT(04:42+08): 跟进 builder-linux 的 `M3-server-audio-level-metrics-20260128-1` 完成状态与回写。
 - TEST(04:42+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
+- DONE(04:48+08): 完成 `M3-server-audio-level-metrics-20260128-1`：netmic-server metrics 新增 PCM16 的 RMS/peak 统计并输出到 snapshot 日志。
+- TEST(04:48+08): `cargo check`.
