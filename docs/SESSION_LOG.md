@@ -156,3 +156,5 @@
 - DONE(01:44+08): scribe 复跑：`scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3），并确认 `.autopilot/research_mode.txt` 不存在。
 - BLOCKER(01:44+08): Hub 显示 `M0-virtual-mic-20260128-3` 状态为 blocked，真实 Runner 缺少 `sox` 导致 5 分钟写入验证未完成；需补依赖后重测。
 - TEST(01:44+08): 读取 `.autopilot/verify_status.json` 与 `curl -s "$HUB/v1/{tasks,events}"`（均成功）；任务快照中 `M0-virtual-mic-20260128-2` 为 done、`M0-virtual-mic-20260128-3` 为 blocked。
+- DONE(01:51+08): 认领 M3-001，补齐 server/client 侧重连状态机与指标占位：新增状态转换日志、丢包/缓冲深度等统计结构，并在代码注释中标注 10 秒恢复窗口目标。
+- TEST(01:51+08): 运行 `cargo check`（通过）。

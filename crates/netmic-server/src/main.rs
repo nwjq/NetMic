@@ -7,7 +7,7 @@
 
 use std::env;
 use std::net::{SocketAddr, UdpSocket};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use netmic_proto::datagram::{split_datagram, DatagramKind};
@@ -22,6 +22,14 @@ const DEFAULT_BIND_ADDR: &str = "0.0.0.0";
 const MAX_DATAGRAM_SIZE: usize = 1500;
 /// 读超时（用于避免无流量时永久阻塞，便于日志可观测）。
 const READ_TIMEOUT_MS: u64 = 250;
+/// 进入重连状态的空闲宽限（避免偶发抖动立即触发重连）。
+const RECONNECT_GRACE_SECS: u64 = 1;
+/// 重连窗口目标（MVP 要求 10 秒内恢复）。
+const RECONNECT_WINDOW_SECS: u64 = 10;
+/// 指标输出间隔（占位值，先保证日志可观测）。
+const METRICS_REPORT_SECS: u64 = 5;
+/// 目标缓冲深度（占位：与 MVP 默认 100ms 目标一致）。
+const BUFFER_TARGET_MS: u64 = 100;
 
 fn main() -> Result<()> {
     init_tracing();
@@ -67,71 +75,55 @@ fn bind_udp_socket(bind_addr: &str) -> Result<UdpSocket> {
 
 fn run_receiver_loop(socket: &UdpSocket) -> Result<()> {
     let mut buf = [0_u8; MAX_DATAGRAM_SIZE];
-    let mut active_client: Option<SocketAddr> = None;
+    let mut ctx = ReceiverContext::new();
 
     loop {
         match socket.recv_from(&mut buf) {
             Ok((len, addr)) => {
                 let packet = &buf[..len];
-                if !accept_or_lock_client(&mut active_client, addr) {
+                let now = Instant::now();
+                if !ctx.accept_or_lock_client(addr, now) {
                     continue;
                 }
-                handle_datagram(packet, addr);
+                if let Some((kind, payload)) = split_datagram(packet) {
+                    ctx.metrics.on_datagram(kind, payload.len());
+                    match kind {
+                        DatagramKind::ControlJson => handle_control_payload(payload, addr),
+                        DatagramKind::AudioPcm16 => {
+                            info!(
+                                %addr,
+                                bytes = payload.len(),
+                                kind = kind.as_str(),
+                                "received audio payload (pcm16 placeholder)"
+                            );
+                        }
+                        DatagramKind::Unknown(tag) => {
+                            warn!(
+                                %addr,
+                                tag,
+                                bytes = payload.len(),
+                                "received datagram with unknown kind"
+                            );
+                        }
+                    }
+                } else {
+                    ctx.metrics.on_empty();
+                    debug!(%addr, "received empty datagram");
+                }
+                ctx.maybe_report(now);
             }
             Err(err)
                 if err.kind() == std::io::ErrorKind::WouldBlock
                     || err.kind() == std::io::ErrorKind::TimedOut =>
             {
+                let now = Instant::now();
+                ctx.on_timeout_tick(now);
+                ctx.maybe_report(now);
                 debug!("udp recv timeout (no packets yet)");
             }
             Err(err) => {
                 warn!(%err, "udp recv error");
             }
-        }
-    }
-}
-
-/// 单客户端占位策略：
-/// - 首个发送方锁定为 active client；
-/// - 其他来源直接拒绝并打日志（后续可回发 BUSY 控制消息）。
-fn accept_or_lock_client(active_client: &mut Option<SocketAddr>, addr: SocketAddr) -> bool {
-    match active_client {
-        Some(current) if *current != addr => {
-            warn!(%addr, active = %current, "reject packet from non-active client (busy)");
-            false
-        }
-        Some(_) => true,
-        None => {
-            info!(%addr, "lock active client");
-            *active_client = Some(addr);
-            true
-        }
-    }
-}
-
-fn handle_datagram(packet: &[u8], addr: SocketAddr) {
-    match split_datagram(packet) {
-        Some((kind, payload)) => match kind {
-            DatagramKind::ControlJson => handle_control_payload(payload, addr),
-            DatagramKind::AudioPcm16 => {
-                info!(
-                    %addr,
-                    bytes = payload.len(),
-                    kind = kind.as_str(),
-                    "received audio payload (pcm16 placeholder)"
-                );
-            }
-            DatagramKind::Unknown(tag) => {
-                warn!(
-                    %addr,
-                    tag,
-                    bytes = payload.len(),
-                    "received datagram with unknown kind"
-                );
-            }
-        },
-        None => {
-            debug!(%addr, "received empty datagram");
         }
     }
 }
@@ -156,5 +148,206 @@ fn handle_control_payload(payload: &[u8], addr: SocketAddr) {
                 "failed to parse control json payload"
             );
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionState {
+    Idle,
+    Active,
+    Reconnecting,
+}
+
+impl ConnectionState {
+    fn as_str(self) -> &'static str {
+        match self {
+            ConnectionState::Idle => "idle",
+            ConnectionState::Active => "active",
+            ConnectionState::Reconnecting => "reconnecting",
+        }
+    }
+}
+
+struct ReceiverContext {
+    state: ConnectionState,
+    active_client: Option<SocketAddr>,
+    last_packet_at: Option<Instant>,
+    metrics: ReceiverMetrics,
+}
+
+impl ReceiverContext {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            state: ConnectionState::Idle,
+            active_client: None,
+            last_packet_at: None,
+            metrics: ReceiverMetrics::new(now),
+        }
+    }
+
+    /// 单客户端占位策略：
+    /// - 首个发送方锁定为 active client；
+    /// - 其他来源直接拒绝并打日志（后续可回发 BUSY 控制消息）。
+    fn accept_or_lock_client(&mut self, addr: SocketAddr, now: Instant) -> bool {
+        match self.active_client {
+            Some(current) if current != addr => {
+                self.metrics.on_busy_reject();
+                warn!(%addr, active = %current, "reject packet from non-active client (busy)");
+                false
+            }
+            Some(_) => {
+                if self.state == ConnectionState::Reconnecting {
+                    self.transition_to(ConnectionState::Active, "packet received, reconnect ok");
+                }
+                self.last_packet_at = Some(now);
+                true
+            }
+            None => {
+                info!(%addr, "lock active client");
+                self.active_client = Some(addr);
+                self.last_packet_at = Some(now);
+                self.transition_to(ConnectionState::Active, "lock active client");
+                true
+            }
+        }
+    }
+
+    fn on_timeout_tick(&mut self, now: Instant) {
+        self.metrics.on_timeout();
+        self.update_reconnect_state(now);
+    }
+
+    fn update_reconnect_state(&mut self, now: Instant) {
+        let Some(last_seen) = self.last_packet_at else {
+            return;
+        };
+        let idle_for = now.saturating_duration_since(last_seen);
+
+        if idle_for >= Duration::from_secs(RECONNECT_GRACE_SECS)
+            && self.state == ConnectionState::Active
+        {
+            self.transition_to(ConnectionState::Reconnecting, "no packets, enter reconnecting");
+        }
+
+        if idle_for >= Duration::from_secs(RECONNECT_WINDOW_SECS)
+            && self.state == ConnectionState::Reconnecting
+        {
+            let released = self.active_client.take();
+            self.last_packet_at = None;
+            self.transition_to(ConnectionState::Idle, "reconnect window exceeded, release client");
+            if let Some(addr) = released {
+                info!(%addr, "active client released after reconnect timeout");
+            }
+        }
+    }
+
+    fn maybe_report(&mut self, now: Instant) {
+        self.metrics.report_if_due(
+            now,
+            self.state,
+            self.active_client,
+            self.last_packet_at,
+        );
+    }
+
+    fn transition_to(&mut self, next: ConnectionState, reason: &str) {
+        if self.state == next {
+            return;
+        }
+        info!(
+            from = self.state.as_str(),
+            to = next.as_str(),
+            reason,
+            "receiver state transition"
+        );
+        self.state = next;
+    }
+}
+
+struct ReceiverMetrics {
+    packets_total: u64,
+    bytes_total: u64,
+    control_packets: u64,
+    audio_packets: u64,
+    unknown_packets: u64,
+    empty_packets: u64,
+    busy_rejects: u64,
+    read_timeouts: u64,
+    buffer_depth_frames: usize,
+    buffer_target_ms: u64,
+    last_report_at: Instant,
+}
+
+impl ReceiverMetrics {
+    fn new(now: Instant) -> Self {
+        Self {
+            packets_total: 0,
+            bytes_total: 0,
+            control_packets: 0,
+            audio_packets: 0,
+            unknown_packets: 0,
+            empty_packets: 0,
+            busy_rejects: 0,
+            read_timeouts: 0,
+            buffer_depth_frames: 0,
+            buffer_target_ms: BUFFER_TARGET_MS,
+            last_report_at: now,
+        }
+    }
+
+    fn on_datagram(&mut self, kind: DatagramKind, payload_len: usize) {
+        self.packets_total += 1;
+        self.bytes_total += payload_len as u64;
+        match kind {
+            DatagramKind::ControlJson => self.control_packets += 1,
+            DatagramKind::AudioPcm16 => self.audio_packets += 1,
+            DatagramKind::Unknown(_) => self.unknown_packets += 1,
+        }
+    }
+
+    fn on_empty(&mut self) {
+        self.empty_packets += 1;
+    }
+
+    fn on_busy_reject(&mut self) {
+        self.busy_rejects += 1;
+    }
+
+    fn on_timeout(&mut self) {
+        self.read_timeouts += 1;
+    }
+
+    fn report_if_due(
+        &mut self,
+        now: Instant,
+        state: ConnectionState,
+        active_client: Option<SocketAddr>,
+        last_packet_at: Option<Instant>,
+    ) {
+        if now.duration_since(self.last_report_at) < Duration::from_secs(METRICS_REPORT_SECS) {
+            return;
+        }
+        let idle_ms = last_packet_at
+            .map(|ts| now.duration_since(ts).as_millis() as u64)
+            .unwrap_or(0);
+        info!(
+            state = state.as_str(),
+            active = ?active_client,
+            packets_total = self.packets_total,
+            bytes_total = self.bytes_total,
+            control_packets = self.control_packets,
+            audio_packets = self.audio_packets,
+            unknown_packets = self.unknown_packets,
+            empty_packets = self.empty_packets,
+            busy_rejects = self.busy_rejects,
+            read_timeouts = self.read_timeouts,
+            buffer_depth_frames = self.buffer_depth_frames,
+            buffer_target_ms = self.buffer_target_ms,
+            reconnect_window_secs = RECONNECT_WINDOW_SECS,
+            idle_ms,
+            "receiver metrics snapshot"
+        );
+        self.last_report_at = now;
     }
 }
