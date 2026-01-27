@@ -1,6 +1,11 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(01:54+08): orchestrator 清单复跑：Hub `register` 成功（event_id=150）；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
+- DONE(01:54+08): 本轮 `python3 scripts/verify_mvp.py` 初始出现 `netmic-client` 的 `DatagramKind` 识别报错（M1 blocked）；随后运行 `cargo check` 并重跑 `python3 scripts/verify_mvp.py`，M0–M3 全 pass（active=M3），`.autopilot/verify_status.json` 已更新。
+- DONE(01:54+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M3-001-metrics-and-reconnect` 已 done。
+- NEXT(01:54+08): 协助 builder-linux 补齐 sox/paplay 依赖并重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，回写稳定性结论。
+- TEST(01:54+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`cargo check`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(01:45+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=146）；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
 - DONE(01:45+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3，progress=d9746cc5bb）；确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(01:45+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M0-virtual-mic-20260128-2` 已 done。
