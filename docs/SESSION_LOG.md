@@ -110,3 +110,7 @@
 - TEST(01:22+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s \"$HUB/v1/register\"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s \"$HUB/v1/{tasks,events}\"`（均成功）。
 - DONE(01:23+08): builder-linux 回看 active gate=M0 的失败签名 `060cafe7a6`，确认根因是 `--json` 依赖外部 `cat`；当前实现已改为 shell 内建 `printf`，`scripts/linux/audio_selfcheck_test.sh` 与 `python3 scripts/verify_mvp.py` 均通过（task `M0-virtual-mic-20260128-1` 已 done）。
 - TEST(01:23+08): 运行 `scripts/linux/audio_selfcheck.sh --json` 与 `--smoke --json`（均输出 JSON；本机因未检测到音频服务而 `NOT_READY`，已记录为环境结论）。
+- DONE(01:28+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=112）、`python3 scripts/verify_mvp.py`（M0–M3 仍全 pass，active=M3），并确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:28+08): Hub 任务快照出现新推进：`M2-001-config-validation` 已由 `builder-linux` 认领（task.claim event_id=113）；`M0-virtual-mic-20260128-2/-3` 仍 queued。
+- NEXT(01:28+08): 保持 M0 真实 Runner 验证主线，优先推动 `M0-virtual-mic-20260128-2`（create/status/remove 幂等）与 `-3`（5 分钟 smoke）被认领并回写 module/source 关键信息。
+- TEST(01:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
