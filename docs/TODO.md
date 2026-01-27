@@ -6,6 +6,7 @@
 - 里程碑跟进：`M1-003-client-capture-sender` 已 superseded（由 `M1-client-capture-skeleton-20260128-1` 覆盖），若需接入真实采集/重采样再新建任务。
 - 自动驾驶：运行 `scripts/agent_bootstrap.sh`，观察置顶提示并清除阻塞项。
 - 记录(03:58+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-capture-skeleton-20260128-1` 已 done，`M1-003-client-capture-sender` 已 superseded，当前无 queued 任务。
+- 记录(04:02+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-capture-skeleton-20260128-1` 已 done，`M1-003-client-capture-sender` 已 superseded，当前无 queued 任务。
 - 记录(03:56+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-003-client-capture-sender` 已 superseded（由 `M1-client-capture-skeleton-20260128-1` 覆盖），当前无 queued 任务。
 - 记录(03:53+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-capture-skeleton-20260128-1` 已 done，`M1-003-client-capture-sender` 仍 queued。
 - 记录(03:47+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-capture-skeleton-20260128-1` 已 done，`M1-003-client-capture-sender` 仍 queued。
