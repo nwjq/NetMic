@@ -61,8 +61,8 @@ fn server_addr_from_env() -> String {
 /// - 便于手工联调：`NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client`。
 fn send_demo_packets(params: &SessionParams) -> Result<(), String> {
     let server_addr = server_addr_from_env();
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .map_err(|err| format!("bind udp socket failed: {err}"))?;
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
 
     let control = build_control_datagram(params)
         .map_err(|err| format!("build control datagram failed: {err}"))?;

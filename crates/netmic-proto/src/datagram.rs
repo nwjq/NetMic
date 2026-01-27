@@ -83,7 +83,7 @@ mod tests {
         let buf = [0_u8, b'{', b'}'];
         let (kind, payload) = split_datagram(&buf).expect("control datagram");
         assert_eq!(kind, DatagramKind::ControlJson);
-        assert_eq!(payload, &[b'{', b'}']);
+        assert_eq!(payload, b"{}");
     }
 
     #[test]
