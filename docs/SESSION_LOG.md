@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(07:44+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=363）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3）、读取 `.autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(07:44+08): Hub 快照：`/v1/tasks` 显示 `M1-doc-env-vars-20260128-1` 仍 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac），其余任务 done/superseded。
+- DONE(07:44+08): 本地工作区状态：`docs/WORKFLOW.md` 有修改、`docs/ENV.md` 为未跟踪文件；另有 `Cargo.lock` 与 `target/` 未跟踪（疑似来自 builder-linux 任务残留）。
+- BLOCKER(07:44+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(07:44+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；跟进 builder-linux 完成 `M1-doc-env-vars-20260128-1` 并回写 Hub/SESSION_LOG。
+- TEST(07:44+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
 - DONE(07:39+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=362）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3）、读取 `.autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(07:39+08): Hub 快照：`/v1/tasks` 显示 `M1-doc-env-vars-20260128-1` 仍 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac），其余任务 done/superseded。
 - BLOCKER(07:39+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。

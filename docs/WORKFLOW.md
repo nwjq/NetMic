@@ -104,6 +104,9 @@ Issue 标题简明，带模块前缀（例如：`client/采集`）。
 3) **日志与测试结果**  
 E2E 结果记录在 GitHub Actions，日志作为 artifact 存档。
 
+4) **运行时环境变量**  
+统一参考 `docs/ENV.md`（仅列出 `NETMIC_*`）。
+
 ---
 
 ## 7. 建议的标签体系
