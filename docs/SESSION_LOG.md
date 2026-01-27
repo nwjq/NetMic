@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(05:03+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=296）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(05:03+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(05:03+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe 在线；`/v1/tasks` 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
+- BLOCKER(05:03+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(05:03+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:03+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
 - DONE(04:49+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=290）。
 - DONE(04:49+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(04:49+08): Hub 快照：`/v1/tasks` 显示 `M3-server-audio-level-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
@@ -561,3 +567,8 @@
 - BLOCKER(04:51+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac）。
 - NEXT(04:51+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
 - TEST(04:51+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/task_update"`（M3-server-audio-level-metrics-20260128-1 done）。
+- DONE(05:03+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=295）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在，并刷新 Hub tasks/events。
+- DONE(05:03+08): Hub 任务快照：`M3-server-audio-level-metrics-20260128-1` done，`M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac）。
+- BLOCKER(05:03+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
+- NEXT(05:03+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:03+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
