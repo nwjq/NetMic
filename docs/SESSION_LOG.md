@@ -536,3 +536,9 @@
 - NEXT(04:40+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，并回写 SESSION_LOG/Hub。
 - NEXT(04:40+08): 跟进 builder-linux 的 `M3-server-audio-level-metrics-20260128-1` 完成状态与回写。
 - TEST(04:40+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(04:42+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=288）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(04:42+08): Hub 任务快照：`M3-server-audio-level-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac）。
+- BLOCKER(04:42+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
+- NEXT(04:42+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，并回写 SESSION_LOG/Hub。
+- NEXT(04:42+08): 跟进 builder-linux 的 `M3-server-audio-level-metrics-20260128-1` 完成状态与回写。
+- TEST(04:42+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
