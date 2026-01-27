@@ -424,6 +424,7 @@ impl ReceiverMetrics {
             return;
         }
         let (audio_rms, audio_peak) = self.take_audio_level_snapshot();
+        let buffer_depth_ms = self.buffer_depth_ms();
         let idle_ms = last_packet_at
             .map(|ts| now.duration_since(ts).as_millis() as u64)
             .unwrap_or(0);
@@ -439,6 +440,7 @@ impl ReceiverMetrics {
             busy_rejects = self.busy_rejects,
             read_timeouts = self.read_timeouts,
             buffer_depth_frames = self.buffer_depth_frames,
+            buffer_depth_ms,
             buffer_target_ms = self.buffer_target_ms,
             audio_rms,
             audio_peak,
@@ -506,5 +508,15 @@ impl ReceiverMetrics {
             self.buffer_depth_frames = self.buffer_depth_frames.saturating_sub(frames_to_consume);
         }
         self.last_consume_at = now;
+    }
+
+    fn buffer_depth_ms(&self) -> u64 {
+        let sample_rate_hz = self.sample_rate_hz as u64;
+        if sample_rate_hz == 0 {
+            return 0;
+        }
+        (self.buffer_depth_frames as u64)
+            .saturating_mul(1000)
+            .saturating_div(sample_rate_hz)
     }
 }
