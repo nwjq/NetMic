@@ -1,13 +1,31 @@
 # SESSION LOG
 
 ## 2026-01-27
-- DONE: 将 `scripts/agent_bootstrap.sh` 升级为“前台监督器入口”，自动自检/启动 Hub/autopilot/任务种子/骨架初始化；为 autopilot 增加 `--context` 防递归；新增 `scripts/seed_tasks.py` 与 `scripts/bootstrap/bootstrap_workspace.sh`。
+- DONE: 将 `scripts/agent_bootstrap.sh` 升级为“前台监督器入口”，自动自检/启动 Hub/autopilot/任务种子/骨架初始化；为 autopilot 增加 `--context` 防递归；新增 `scripts/seed_tasks.py`、`scripts/bootstrap/bootstrap_workspace.sh`、Rust workspace 骨架（`Cargo.toml` + `crates/`）、Linux 自检脚本（`scripts/linux/audio_selfcheck.sh`）以及协议草案文档（`docs/PROTO.md`）。
+- DONE(20:05+08): 当 Hub 启动失败且日志包含 PermissionError/operation not permitted 时，`agent_bootstrap.sh` 会给出“受限环境禁止监听端口”的明确提示，并指向 `/.autopilot/logs/hub.log`。
+- DONE(20:08+08): 修复 `scripts/linux/audio_selfcheck.sh` 的 trap 作用域问题（函数返回后清理访问局部变量导致 `set -u` 报错）；将清理函数提升到脚本级并在 smoke 前重置状态。
 - DONE(20:04+08): 以 scribe 视角执行 `scripts/agent_bootstrap.sh --context`；尝试启动/注册 Hub 以拉取 tasks/events。
 - DONE(20:04+08): 按 scribe 循环尝试 `register` / `tasks` / `events`（`curl -s http://127.0.0.1:7788/...`），当前环境返回 exit=7（无法连接 Hub）。
+- DONE(20:07+08): 复跑 `scripts/agent_bootstrap.sh --once`；Hub health/agents/tasks 仍为空（与端口绑定受限一致）。
 - BLOCKER: 本机缺少 cargo（Rust 工具链）；未配置 `BUILDER_MAC_SSH`；codex 可能尚未登录（需用户侧一次性处理）。
 - BLOCKER(20:04+08): 当前沙箱环境禁止监听 TCP 端口；`python3 agent-hub/agent_hub.py` 报 `PermissionError: [Errno 1] Operation not permitted`，因此无法读取 Hub 的 tasks/events。
 - BLOCKER(20:04+08): 复现 Hub 启动失败；日志位于 `/tmp/netmic_hub.log`（绑定 `:7788` 被拒绝）。
 - NEXT: 安装 rustup/cargo；在 `.autopilot/runner.env` 填写跨机配置（或在 mac 也运行监督器）；随后直接运行 `scripts/agent_bootstrap.sh` 进入持续开发。
 - NEXT(20:04+08): 在可监听端口的真实机/Runner 上启动 Hub（或用监督器入口自动拉起），再由 scribe 基于 Hub 事件更新日志与 TODO。
-- TEST: 运行 `scripts/agent_bootstrap.sh --context`；运行 `scripts/agent_bootstrap.sh --once`；运行 `scripts/autopilot.sh stop` 并用 `ss -ltnp '( sport = :7788 )'` 确认 Hub 可停止。
+- TEST: 运行 `scripts/agent_bootstrap.sh --context`；运行 `scripts/agent_bootstrap.sh --once` 后执行 `scripts/autopilot.sh stop` 并用 `ss -ltnp '( sport = :7788 )'` 确认 Hub 可停止；运行 `scripts/linux/audio_selfcheck_test.sh`（stub pactl 测试通过）。
+- TEST(20:05+08): 运行 `ROLE= PATH=/usr/bin:/bin scripts/agent_bootstrap.sh --once`，确认置顶提示包含“PermissionError/受限环境禁止监听端口”的明确说明。
+- TEST(20:08+08): 运行 `bash scripts/linux/audio_selfcheck_test.sh`，stub pactl 场景通过，确认不再出现 `source_id: 未绑定的变量`。
 - TEST(20:04+08): 再次运行 `scripts/agent_bootstrap.sh --context`；尝试 `nohup python3 agent-hub/agent_hub.py`（受限环境下启动失败，见 `/tmp/netmic_hub.log`）。
+- TEST(20:07+08): 运行 `scripts/agent_bootstrap.sh --once`（在无 Hub/cargo 时仍能输出上下文摘要并保持幂等退出）。
+- DONE(20:07+08): 仓库新增 Linux 音频注入自检脚本 `scripts/linux/audio_selfcheck.sh`，并提供 stub 测试 `scripts/linux/audio_selfcheck_test.sh`，覆盖 pactl 缺失与 smoke 成功路径。
+- BLOCKER(20:09+08): 当前环境未运行 Pulse/PipeWire 服务端，执行 `scripts/linux/audio_selfcheck.sh` 时 `pactl info` 失败；Hub 仍受限于端口绑定权限，无法通过 Hub 领取/回写任务状态。
+- NEXT(20:09+08): 在真实 Linux Runner 上执行 `scripts/linux/audio_selfcheck.sh --smoke` 验证可创建临时虚拟麦克风，然后继续推进 M0 虚拟麦克风注入与测试音写入。
+- TEST(20:09+08): 运行 `bash scripts/linux/audio_selfcheck_test.sh`（通过）；运行 `bash scripts/linux/audio_selfcheck.sh`（返回 NOT_READY，符合受限环境预期）。
+- DONE: 在缺少 cargo 的情况下手动创建 Rust workspace（`Cargo.toml` + `crates/netmic-{proto,server,client}`），并实现 `netmic-proto` 的 UDP datagram 分流骨架与 `netmic-server` 的单客户端占用握手/忙碌响应逻辑；同步新增 `docs/PROTO.md` 作为协议事实来源。
+- BLOCKER: 沙箱禁止监听端口，无法在本机启动 Hub（`agent-hub.py` 报 `PermissionError: Operation not permitted`）；同时本机仍缺少 cargo，无法执行 `cargo check`/单元测试。
+- NEXT: 用户侧安装 rustup/cargo 后运行 `cargo check -p netmic-server` 与 `cargo test -p netmic-proto`；在允许监听端口的环境中重新注册 Hub 并认领任务。
+- TEST: 运行 `scripts/agent_bootstrap.sh --context`；尝试 `cargo --version`（失败：未找到命令）；尝试启动 `agent-hub/agent_hub.py`（失败：权限受限）。
+- DONE(20:09+08): 以 orchestrator 视角执行清单：尝试 register/agents/tasks（均因端口受限失败），转为离线推进；新增协议事实来源 `docs/PROTO.md`，并补齐 `crates/netmic-proto/src/protocol.rs` 与 `crates/netmic-{server,client}/src/main.rs` 最小骨架。
+- BLOCKER(20:09+08): 当前沙箱禁止绑定/访问 `127.0.0.1:7788`，无法通过 Hub 进行任务队列检查与 claim/release。
+- NEXT(20:09+08): 在可监听端口的 Runner 上重新执行 register + `/v1/agents` + `/v1/tasks`；若队列为空，运行 `scripts/seed_tasks.py --hub <hub>` 注入任务种子，并优先推进 M0 虚拟麦克风自检/写入链路。
+- TEST(20:09+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 `python3 -m py_compile scripts/seed_tasks.py`（成功）；Rust 侧因缺少 cargo 无法执行 `cargo check`。
