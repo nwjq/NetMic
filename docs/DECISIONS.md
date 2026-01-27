@@ -13,3 +13,8 @@
 - 背景：当前 Codex 沙箱无法监听 TCP 端口，`agent-hub` 绑定 `:7788` 会失败，Hub 不可达。
 - 决策：scribe 在受限环境不强依赖 Hub；以 `scripts/agent_bootstrap.sh --context` 与 MVP/ROADMAP 为准更新 `SESSION_LOG`/`TODO`，并显式记录 Hub 阻塞。
 - 影响：日志与优先级可保持可读，但 tasks/events 需在真实 Runner 上补齐与回写。
+
+## 2026-01-28（builder-linux / M1 UDP 接收骨架）
+- 背景：M1 需要在服务端同一 UDP 端口上区分控制面与数据面，但协议尚未冻结。
+- 决策：在 `netmic-proto` 中引入“首字节 kind + payload”的占位 framing，并约定 kind=0 为控制面 JSON、kind=1 为 PCM16 数据面；服务端锁定首个发送方为 active client，其余来源仅记录 busy 日志。
+- 影响：后续冻结 wire format 时，必须同时更新 `docs/PROTO.md` 与 `crates/netmic-proto/src/datagram.rs` / `crates/netmic-server/src/main.rs` 的分流逻辑。

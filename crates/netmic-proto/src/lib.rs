@@ -3,4 +3,5 @@
 //! 文档来源：`MVP.md` 与 `docs/ROADMAP.md`。
 
 pub mod config;
+pub mod datagram;
 pub mod protocol;

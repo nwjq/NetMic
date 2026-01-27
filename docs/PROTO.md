@@ -9,6 +9,20 @@
 - 单客户端占用：服务端最多 1 个 active sender（冲突返回 BUSY）
 - 控制面与数据面：可复用同端口，但需有明确消息类型
 
+## Datagram 分流（M1 占位 framing）
+为满足“同端口区分控制面/数据面”的最小能力，当前采用极简 framing：
+- UDP payload 首字节为 `kind`
+- 剩余部分为对应 payload
+
+kind 定义（代码位置：`crates/netmic-proto/src/datagram.rs`）：
+- `0`：控制面 JSON（占位实现，建议包含 `type` 字段）
+- `1`：数据面 PCM16（占位实现，后续将替换为“帧头 + 编码数据”）
+- 其他值：未知类型（服务端仅记录日志）
+
+注意：
+- 这是 M1 的“可演进骨架”，不是最终 wire format。
+- 若调整 kind 或 framing 规则，必须同步更新本文件与实现。
+
 ## 会话参数：`SessionParams`
 字段与含义（代码位置：`crates/netmic-proto/src/protocol.rs`）：
 - `codec: String`
