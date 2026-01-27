@@ -343,3 +343,8 @@
 - BLOCKER(02:59+08): 环境缺少 `sox`，测试音生成失败导致 5 分钟持续写入验证未完成。
 - NEXT(02:59+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
 - TEST(02:59+08): 运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；输出 `FAIL: 缺少命令：sox` / `WARN: 缺少 sox 或生成测试音失败`。
+- DONE(03:05+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=228）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(03:05+08): Hub 任务快照无变化：`M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 sox），`M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(03:05+08): `sox` 仍缺失导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证无法完成。
+- NEXT(03:05+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
+- TEST(03:05+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
