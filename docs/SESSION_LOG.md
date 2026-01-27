@@ -581,3 +581,25 @@
 - BLOCKER(05:08+08): 当前无 target_role=builder-linux 的 queued 任务；Hub 仅有 `M1-client-cpal-capture-20260128-1`（builder-mac）待领取。
 - NEXT(05:08+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
 - TEST(05:08+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(05:13+08): builder-linux 例行自检：完成 bootstrap/Hub register/verify_mvp/status 检查，确认门禁仍为 M0–M3 全 pass（active=M3）。
+- BLOCKER(05:13+08): 当前无 target_role=builder-linux 的 queued 任务；队列仅 `M1-client-cpal-capture-20260128-1`（builder-mac）。
+- NEXT(05:13+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:13+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(05:18+08): builder-linux 复跑清单：完成 bootstrap/Hub register/verify_mvp/status 检查，门禁仍为 M0–M3 全 pass（active=M3）。
+- BLOCKER(05:18+08): 当前无 target_role=builder-linux 的 queued 任务；队列仅 `M1-client-cpal-capture-20260128-1`（builder-mac）。
+- NEXT(05:18+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:18+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(05:20+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=302）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在，并刷新 Hub tasks/events。
+- DONE(05:20+08): Hub 任务快照：`M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac），其余任务无新变化。
+- BLOCKER(05:20+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
+- NEXT(05:20+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:20+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
+- DONE(05:21+08): builder-linux 例行自检：完成 bootstrap/Hub register/verify_mvp/status 检查，门禁仍为 M0–M3 全 pass（active=M3）。
+- BLOCKER(05:21+08): 当前无 target_role=builder-linux 的 queued 任务；队列仅 `M1-client-cpal-capture-20260128-1`（builder-mac）。
+- NEXT(05:21+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
+- TEST(05:21+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(05:28+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=300）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在，并读取 MVP/ROADMAP/WORKFLOW/MODULE_OWNERS/CONTINUOUS_AUTOPILOT。
+- DONE(05:28+08): 新建任务 `M1-server-audio-dump-sink-20260128-1`（builder-linux，queued）：server 增加可选 PCM16 落盘 sink（NETMIC_SERVER_AUDIO_DUMP）用于调试。
+- BLOCKER(05:28+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 仍 queued。
+- NEXT(05:28+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`；builder-linux 领取 `M1-server-audio-dump-sink-20260128-1` 并回写 SESSION_LOG/Hub。
+- TEST(05:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
