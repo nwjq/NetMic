@@ -69,3 +69,7 @@
 - DONE(00:59+08): 认领 `M1-002-server-udp-receiver` 并落地 UDP 接收骨架：新增 `netmic-proto::datagram` 首字节 kind 分流，占位实现控制面 JSON / 数据面 PCM16；服务端锁定首个发送方为 active client，其余来源记录 busy 日志。
 - NEXT(00:59+08): 在 `netmic-client` 侧对齐 kind framing（首字节 kind + payload），并逐步把控制面 JSON 从 `serde_json::Value` 收敛到具体结构体（握手/心跳）。
 - TEST(00:59+08): 运行 `cargo check`、`cargo test --workspace`（新增 datagram 单测 4/4 通过）、`scripts/verify_mvp.py`（M0–M3 全部 pass）。
+- DONE(01:00+08): scribe 按清单复跑 `scripts/agent_bootstrap.sh --context`、Hub `register`、`scripts/verify_mvp.py`；`.autopilot/verify_status.json` 显示 overall=pass、active=M3，`research_mode.txt` 不存在（符合预期）。
+- DONE(01:00+08): Hub 快照：`BOOT-001/002` 已 completed；`M1-002-server-udp-receiver` 仍由 `builder-linux` 认领；`M1-001-protocol-doc` 与 M0/M2/M3 任务保持 queued。
+- NEXT(01:00+08): scribe 侧优先对齐 `M1-001-protocol-doc`（围绕现有 kind 分流占位实现补强协议文档），并持续把门禁状态与 Hub 任务状态写回 `SESSION_LOG`/`TODO`。
+- TEST(01:00+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s \"$HUB/v1/{register,tasks,events}\"`、`scripts/verify_mvp.py`（均成功）。
