@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(02:02+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=161）。
+- DONE(02:02+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），`.autopilot/research_mode.txt` 不存在。
+- DONE(02:02+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），其余任务保持 done/queued；`/v1/events` 未见新进展事件。
+- BLOCKER(02:02+08): 真实 Runner 缺少 `sox`（pactl/paplay 已有），导致 `M0-virtual-mic-20260128-3` 5 分钟持续写入无法完成。
+- NEXT(02:02+08): 协助 builder-linux 在真实 Runner 安装 sox 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，回写稳定性结论并解除阻塞。
+- TEST(02:02+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`。
 - DONE(01:58+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=157）完成；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
 - DONE(01:58+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），`.autopilot/research_mode.txt` 不存在。
 - DONE(01:58+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），其余任务保持 done/queued。
