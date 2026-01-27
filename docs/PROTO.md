@@ -78,8 +78,12 @@ Server → Client
 Server → Client 为主
 - `packets_received: u64`
 - `packets_lost: u64`
+- `buffer_depth_frames: u64`（接收端音频缓冲估算帧数，占位）
+- `buffer_depth_ms: u64`（接收端音频缓冲估算毫秒，占位）
 - `jitter_buffer_depth_ms: f32`
 - `estimated_e2e_latency_ms: f32`
+- `audio_rms: f32`（占位，单位/算法后续冻结）
+- `audio_peak: u32`（占位，通常为 PCM16 |sample| 最大值）
 
 ## 数据面消息（结构）
 

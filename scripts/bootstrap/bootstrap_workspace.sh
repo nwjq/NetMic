@@ -203,10 +203,18 @@ pub struct StatsSnapshot {
     pub packets_received: u64,
     /// 统计窗口内的丢包估计。
     pub packets_lost: u64,
+    /// 接收端音频缓冲估算深度（帧数）。
+    pub buffer_depth_frames: u64,
+    /// 接收端音频缓冲估算深度（毫秒）。
+    pub buffer_depth_ms: u64,
     /// 当前抖动缓冲深度（毫秒）。
     pub jitter_buffer_depth_ms: f32,
     /// 端到端估算延迟（毫秒）。
     pub estimated_e2e_latency_ms: f32,
+    /// 音频 RMS 电平（占位，单位/算法后续冻结）。
+    pub audio_rms: f32,
+    /// 音频峰值电平（占位，通常为 PCM16 |sample| 的最大值）。
+    pub audio_peak: u32,
 }
 
 /// 数据面音频帧头（不含 payload）。
