@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(02:54+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=215），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(02:54+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(02:54+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(02:54+08): 真实 Runner 仍缺少 `sox`，导致 `M0-virtual-mic-20260128-3` 的 5 分钟持续写入验证继续阻塞。
+- NEXT(02:54+08): 继续推动 builder-linux 获取 `sox` 安装权限后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300` 并回写结论；同时推动 builder-mac 认领 `M1-003-client-capture-sender`。
+- TEST(02:54+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(02:47+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=208）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(02:47+08): 已将 `M1-001-protocol-doc` 任务标记为 done（docs/PROTO.md 已覆盖握手/心跳/统计/音频帧头与 BUSY 行为，满足验收）。
 - BLOCKER(02:47+08): 真实 Runner 仍缺少 `sox`，`M0-virtual-mic-20260128-3` 的 5 分钟持续写入验证仍阻塞。
@@ -312,3 +318,12 @@
 - BLOCKER(02:48+08): Hub 显示 `M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 `sox`），5 分钟写入验证待补依赖后重测。
 - NEXT(02:48+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
 - TEST(02:48+08): 运行 `python3 scripts/verify_mvp.py`、读取 `.autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`、`curl -s "$HUB/v1/register"`。
+- DONE(02:50+08): builder-linux 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=214）、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "http://192.168.11.1:7788/v1/tasks?limit=50"`，并 claim `M0-virtual-mic-20260128-3` 后回写 Hub。
+- BLOCKER(02:50+08): 尝试 `apt-get update` 安装 sox 因权限不足失败；`sudo -n true` 需要交互认证，sox 仍缺失，5 分钟写入验证继续 blocked。
+- NEXT(02:50+08): 取得安装权限或预装 sox 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟写入验证并更新 Hub/SESSION_LOG。
+- TEST(02:50+08): 运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`（输出 FAIL 缺少 sox / WARN 跳过写入）、`apt-get update`、`sudo -n true`。
+- DONE(02:55+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=219）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(02:55+08): Hub 任务快照无变化：`M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 sox），`M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(02:55+08): `sox` 仍缺失导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证无法完成。
+- NEXT(02:55+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
+- TEST(02:55+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
