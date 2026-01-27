@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(03:47+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=251）。
+- DONE(03:47+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(03:47+08): Hub 快照：`/v1/tasks` 显示 `M1-client-capture-skeleton-20260128-1` 已 done，`M0-virtual-mic-20260128-3` 已 done，`M1-003-client-capture-sender` 仍 queued（builder-mac）。
+- BLOCKER(03:47+08): builder-mac 未在线，`M1-003-client-capture-sender` 仍 queued。
+- NEXT(03:47+08): 推动 builder-mac 认领并完成 `M1-003-client-capture-sender`，并回写 SESSION_LOG/Hub。
+- TEST(03:47+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/{tasks,events}?limit=50"`。
 - DONE(03:45+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=248），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(03:45+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(03:45+08): Hub 快照：`/v1/agents` 仅 orchestrator/scribe 在 600s 内活跃；`/v1/tasks` 显示 `M1-client-capture-skeleton-20260128-1` 仍 claimed（builder-linux），`M1-003-client-capture-sender` 仍 queued（builder-mac）。
