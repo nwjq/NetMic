@@ -134,3 +134,5 @@
 - DONE(01:30+08): 为 M2 参数校验落地 `netmic-proto::config::normalize_session_params`，新增安全范围常量与回退事件结构，补充单测并在 `docs/ROADMAP.md` 标注当前实现对齐。
 - TEST(01:30+08): 运行 `cargo test -p netmic-proto`（通过）。
 - NEXT(01:30+08): 若需推进真实 Runner 验证，优先认领 `M0-virtual-mic-20260128-2/-3` 并回写 module id/source 与 5 分钟 smoke 结论。
+- DONE(01:37+08): 真实 Linux Runner 验证 `scripts/linux/virtual_mic.sh` 幂等链路：create 成功并返回 module id（sink=536870917, source=536870918），虚拟 source 名称为 `netmic_source`（sink 为 `netmic_sink`）。
+- TEST(01:37+08): 依次运行 `scripts/linux/virtual_mic.sh create` → `status` → `create`(幂等) → `remove` → `status`；最后一次 status 返回 not found（warn）符合预期。
