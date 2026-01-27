@@ -1,5 +1,13 @@
 # SESSION LOG
 
+## 2026-01-28
+- DONE(00:55+08): 以 scribe 清单复跑 `scripts/agent_bootstrap.sh --context`，Hub 健康检查恢复（`http://192.168.11.1:7788` 返回 ok）。
+- DONE(00:55+08): 按清单向 Hub 注册 scribe（`/v1/register` 返回 `ok: true`，event_id=69），并成功拉取 `/v1/tasks` 与 `/v1/events`。
+- DONE(00:54+08): 运行 `python3 scripts/verify_mvp.py`，`.autopilot/verify_status.json` 显示 M0–M3 全部为 pass（active=M3）。
+- BLOCKER(00:55+08): 当前 Hub 任务仍全部为 `queued`，尚未看到 claim/完成类事件，需要 orchestrator/builder 侧推进与回写。
+- NEXT(00:55+08): orchestrator 优先基于当前 Hub 可达性进行 claim/编排；builder-linux 可从 M0 任务链（自检→virtual mic→smoke）开始回写进度。
+- TEST(00:55+08): 运行 `scripts/agent_bootstrap.sh --context`、`python3 scripts/verify_mvp.py`、`curl -s $HUB/v1/{register,tasks,events}`（HUB=`http://192.168.11.1:7788`）。
+
 ## 2026-01-27
 - DONE(00:51+08): 修复 `scripts/autopilot.sh` 在 `AUTOPILOT_DANGEROUS=1` 时同时拼接 `--full-auto` 与 `--dangerously-bypass-approvals-and-sandbox` 的互斥问题；危险模式优先并自动关闭 `--full-auto`，同时更新 stray codex 清理匹配与自动驾驶文档说明。
 - TEST(00:51+08): 运行 `bash -n scripts/autopilot.sh`；用临时 `codex` stub 执行 `AUTOPILOT_DANGEROUS=1 AGENT_ITERATIONS=1 scripts/autopilot.sh start` 后 `scripts/autopilot.sh stop`，确认实际调用仅包含 `--dangerously-bypass-approvals-and-sandbox` 且端口 `:7788` 无残留监听。
