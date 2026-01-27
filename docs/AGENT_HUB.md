@@ -29,6 +29,13 @@ GET /v1/health
 GET /v1/events?since=<event_id>&limit=200
 ```
 
+## Agents / Tasks 状态
+
+```
+GET /v1/agents?active_within=900&limit=50
+GET /v1/tasks?limit=50
+```
+
 ## 注册 / 心跳
 
 ```

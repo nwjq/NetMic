@@ -148,6 +148,10 @@ class AgentHubHandler(BaseHTTPRequestHandler):
             return self.handle_health
         if method == "GET" and path == "/v1/events":
             return self.handle_events
+        if method == "GET" and path == "/v1/agents":
+            return self.handle_agents
+        if method == "GET" and path == "/v1/tasks":
+            return self.handle_tasks
         if method == "POST" and path == "/v1/register":
             return self.handle_register
         if method == "POST" and path == "/v1/heartbeat":
@@ -220,6 +224,69 @@ class AgentHubHandler(BaseHTTPRequestHandler):
             for row in rows
         ]
         return self._send_json(200, {"ok": True, "events": events})
+
+    def handle_agents(self, parsed):
+        qs = parse_qs(parsed.query or "")
+        limit = int(qs.get("limit", ["200"])[0])
+        limit = max(1, min(limit, 1000))
+        active_within = int(qs.get("active_within", ["0"])[0])
+        cutoff = now_ts() - active_within if active_within > 0 else None
+        with db_connect() as conn:
+            db_cleanup(conn)
+            rows = conn.execute(
+                """
+                SELECT agent_id, role, capabilities, host, tags, status, last_seen
+                FROM agents
+                ORDER BY last_seen DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        agents = []
+        for row in rows:
+            last_seen = int(row["last_seen"] or 0)
+            if cutoff is not None and last_seen < cutoff:
+                continue
+            agents.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "role": row["role"],
+                    "capabilities": json.loads(row["capabilities"] or "{}"),
+                    "host": row["host"],
+                    "tags": json.loads(row["tags"] or "[]"),
+                    "status": row["status"],
+                    "last_seen": last_seen,
+                }
+            )
+        return self._send_json(200, {"ok": True, "agents": agents})
+
+    def handle_tasks(self, parsed):
+        qs = parse_qs(parsed.query or "")
+        limit = int(qs.get("limit", ["200"])[0])
+        limit = max(1, min(limit, 1000))
+        with db_connect() as conn:
+            db_cleanup(conn)
+            rows = conn.execute(
+                """
+                SELECT task_id, status, claimed_by, meta, summary, updated_at
+                FROM tasks
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        tasks = [
+            {
+                "task_id": row["task_id"],
+                "status": row["status"],
+                "claimed_by": row["claimed_by"],
+                "meta": json.loads(row["meta"] or "{}"),
+                "summary": row["summary"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+        return self._send_json(200, {"ok": True, "tasks": tasks})
 
     def handle_register(self, parsed):
         body = self._read_json()
