@@ -474,3 +474,7 @@
 - BLOCKER(04:07+08): Hub 队列中无 target_role=builder-linux 的 queued 任务，无法按流程 claim。
 - NEXT(04:07+08): 请 orchestrator 指派 builder-linux 任务或调整 queued 任务 target_role。
 - TEST(04:07+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(04:07+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=263）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(04:07+08): Hub 任务快照：`M1-client-capture-skeleton-20260128-1` 已 done，`M1-003-client-capture-sender` 已 superseded，当前无 queued 任务。
+- NEXT(04:07+08): 如需真实采集/重采样接入（cpal/rubato），再新建小任务推进。
+- TEST(04:07+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
