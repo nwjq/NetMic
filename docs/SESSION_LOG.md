@@ -1,18 +1,24 @@
 # SESSION LOG
 
 ## 2026-01-27
-- DONE: 将 `scripts/agent_bootstrap.sh` 升级为“前台监督器入口”，自动自检/启动 Hub/autopilot/任务种子/骨架初始化；为 autopilot 增加 `--context` 防递归；新增 `scripts/seed_tasks.py`、`scripts/bootstrap/bootstrap_workspace.sh`、Rust workspace 骨架（`Cargo.toml` + `crates/`）、Linux 自检脚本（`scripts/linux/audio_selfcheck.sh`）以及协议草案文档（`docs/PROTO.md`）。
+- DONE(20:21+08): 以 orchestrator 清单复跑 `scripts/agent_bootstrap.sh --context`；Hub register/agents/tasks 仍 exit=7（本机未监听 7788），改用 `sqlite3 agent_hub.db` 读取任务队列现状。
+- DONE(20:21+08): 刷新 M0 任务种子：在 `scripts/seed_tasks.py` 新增 `M0-virtual-mic-20260127-{1,2,3}`，拆分为结构化自检→虚拟麦克风 create/remove→5 分钟写入 smoke 的小任务链。
+- BLOCKER(20:21+08): 当前环境无法连接 `http://127.0.0.1:7788`，无法通过 Hub 执行 claim/release，仅能离线准备任务与文档。
+- NEXT(20:21+08): 在可监听端口的 Runner 上启动 Hub 后运行 `python3 scripts/seed_tasks.py --hub <hub>` 注入新任务；builder-linux 优先认领 `M0-virtual-mic-20260127-1`。
+- TEST(20:21+08): 运行 `python3 -m py_compile scripts/seed_tasks.py`（通过）；运行 `curl -s http://127.0.0.1:7788/v1/register` / `.../agents` / `.../tasks`（exit=7，连接失败）。
+- DONE: 将 `scripts/agent_bootstrap.sh` 升级为“前台监督器入口”，自动自检/启动 Hub/autopilot/任务种子/骨架初始化；为 autopilot 增加 `--context` 防递归；新增 `scripts/seed_tasks.py`、`scripts/bootstrap/bootstrap_workspace.sh`、Rust workspace 骨架（`Cargo.toml` + `crates/`）、Linux 自检脚本（`scripts/linux/audio_selfcheck.sh`）以及协议草案文档（`docs/PROTO.md`）；修复 autopilot stop 时可能遗留 codex 子进程的问题（setsid + 进程组 kill）。
 - DONE(20:05+08): 当 Hub 启动失败且日志包含 PermissionError/operation not permitted 时，`agent_bootstrap.sh` 会给出“受限环境禁止监听端口”的明确提示，并指向 `/.autopilot/logs/hub.log`。
 - DONE(20:08+08): 修复 `scripts/linux/audio_selfcheck.sh` 的 trap 作用域问题（函数返回后清理访问局部变量导致 `set -u` 报错）；将清理函数提升到脚本级并在 smoke 前重置状态。
 - DONE(20:04+08): 以 scribe 视角执行 `scripts/agent_bootstrap.sh --context`；尝试启动/注册 Hub 以拉取 tasks/events。
 - DONE(20:04+08): 按 scribe 循环尝试 `register` / `tasks` / `events`（`curl -s http://127.0.0.1:7788/...`），当前环境返回 exit=7（无法连接 Hub）。
 - DONE(20:07+08): 复跑 `scripts/agent_bootstrap.sh --once`；Hub health/agents/tasks 仍为空（与端口绑定受限一致）。
+- DONE(20:11+08): 在 Hub 不可达时改用 `sqlite3 agent_hub.db` 查看任务种子；当前任务均为 `queued`（含 `M0-001-linux-audio-selfcheck`、`M1-001-protocol-doc` 等）。
 - BLOCKER: 本机缺少 cargo（Rust 工具链）；未配置 `BUILDER_MAC_SSH`；codex 可能尚未登录（需用户侧一次性处理）。
 - BLOCKER(20:04+08): 当前沙箱环境禁止监听 TCP 端口；`python3 agent-hub/agent_hub.py` 报 `PermissionError: [Errno 1] Operation not permitted`，因此无法读取 Hub 的 tasks/events。
 - BLOCKER(20:04+08): 复现 Hub 启动失败；日志位于 `/tmp/netmic_hub.log`（绑定 `:7788` 被拒绝）。
 - NEXT: 安装 rustup/cargo；在 `.autopilot/runner.env` 填写跨机配置（或在 mac 也运行监督器）；随后直接运行 `scripts/agent_bootstrap.sh` 进入持续开发。
 - NEXT(20:04+08): 在可监听端口的真实机/Runner 上启动 Hub（或用监督器入口自动拉起），再由 scribe 基于 Hub 事件更新日志与 TODO。
-- TEST: 运行 `scripts/agent_bootstrap.sh --context`；运行 `scripts/agent_bootstrap.sh --once` 后执行 `scripts/autopilot.sh stop` 并用 `ss -ltnp '( sport = :7788 )'` 确认 Hub 可停止；运行 `scripts/linux/audio_selfcheck_test.sh`（stub pactl 测试通过）。
+- TEST: 运行 `scripts/agent_bootstrap.sh --context`；运行 `scripts/agent_bootstrap.sh --once` 后执行 `scripts/autopilot.sh stop` 并用 `ss -ltnp '( sport = :7788 )'` 确认 Hub 可停止；运行 `scripts/autopilot.sh start`→`stop` 后用 `ps -ef | awk '/codex exec --full-auto -C \\/home\\/arc\\/code\\/NetMic/'` 验证无残留子进程；运行 `scripts/linux/audio_selfcheck_test.sh`（stub pactl 测试通过）。
 - TEST(20:05+08): 运行 `ROLE= PATH=/usr/bin:/bin scripts/agent_bootstrap.sh --once`，确认置顶提示包含“PermissionError/受限环境禁止监听端口”的明确说明。
 - TEST(20:08+08): 运行 `bash scripts/linux/audio_selfcheck_test.sh`，stub pactl 场景通过，确认不再出现 `source_id: 未绑定的变量`。
 - TEST(20:04+08): 再次运行 `scripts/agent_bootstrap.sh --context`；尝试 `nohup python3 agent-hub/agent_hub.py`（受限环境下启动失败，见 `/tmp/netmic_hub.log`）。
@@ -33,3 +39,7 @@
 - BLOCKER(20:18+08): 直连 Hub（`curl -s http://127.0.0.1:7788/v1/register|tasks|events`）均返回 exit=7，当前环境仍无法访问 `:7788`。
 - NEXT(20:18+08): 在可监听端口的 Runner 上复跑 register/tasks/events；若仍不可达，先检查 Hub 进程与端口占用，再考虑 `scripts/seed_tasks.py --hub <hub>` 补种子任务。
 - TEST(20:18+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 Hub 相关 curl（失败：exit=7，无法连接 `127.0.0.1:7788`）。
+- DONE(20:19+08): scribe 复跑 `scripts/agent_bootstrap.sh --context`，并按循环尝试 `register` / `tasks` / `events`（用于确认 Hub 可达性）。
+- BLOCKER(20:19+08): `curl -s http://127.0.0.1:7788/...` 仍返回 exit=7（无法连接 Hub），本轮无法基于 Hub 任务/事件回写状态。
+- NEXT(20:19+08): 继续以 MVP/ROADMAP 为准维护文档；待可监听端口的 Runner 启动 Hub 后，优先补跑 `register` + `/v1/tasks` + `/v1/events` 并对齐 TODO。
+- TEST(20:19+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 `curl -s $HUB/v1/{register,tasks,events}`（均 exit=7，符合当前沙箱限制）。
