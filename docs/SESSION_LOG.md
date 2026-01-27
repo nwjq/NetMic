@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(04:17+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=268）。
+- DONE(04:17+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(04:17+08): Hub 快照：`/v1/tasks` 仅 `M1-client-cpal-capture-20260128-1` 处于 queued（target_role=builder-mac）；`/v1/events` 未见新增任务状态变化。
+- BLOCKER(04:17+08): 当前 queued 任务仅 `M1-client-cpal-capture-20260128-1`（builder-mac），需对应角色认领/推进。
+- NEXT(04:17+08): 推动 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；或由 orchestrator 改派可由 builder-linux 执行的替代小任务。
+- TEST(04:17+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
 - DONE(04:15+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=269），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(04:15+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(04:15+08): Hub 快照：`/v1/agents` 显示 orchestrator/builder-linux/scribe 在线；`/v1/tasks` 仅 `M1-client-cpal-capture-20260128-1` 处于 queued（target_role=builder-mac）。
