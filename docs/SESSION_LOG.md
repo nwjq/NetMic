@@ -530,3 +530,9 @@
 - TEST(04:26+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
 - DONE(04:28+08): builder-linux 领取 `M1-server-buffer-metrics-20260128-1` 并在 netmic-server metrics 增加 PCM16 payload 帧数估算与 buffer_depth_frames 消耗逻辑。
 - TEST(04:28+08): `cargo check`。
+- DONE(04:40+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=286）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在，并刷新 Hub agents/tasks。
+- DONE(04:40+08): Hub 任务快照：`M3-server-audio-level-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac）。
+- BLOCKER(04:40+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
+- NEXT(04:40+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，并回写 SESSION_LOG/Hub。
+- NEXT(04:40+08): 跟进 builder-linux 的 `M3-server-audio-level-metrics-20260128-1` 完成状态与回写。
+- TEST(04:40+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
