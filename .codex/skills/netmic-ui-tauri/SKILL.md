@@ -11,6 +11,12 @@ description: NetMic 桌面端 UI/UX 设计与 Tauri 前后端交互规范。用�
 - 设计/实现 Tauri command、事件流与状态管理
 - 调整 UI 与 Rust 的边界、权限与安全策略
 
+## Skill 优先级与边界（避免冲突）
+- 在 NetMic 仓库内，只要涉及 UI/UX、IPC 协议、状态机、最小命令集，或“新增配置/指标”的配套步骤，优先使用本 skill。
+- `.codex/skills/tauri/SKILL.md` 作为通用补充：需要官方细节（配置字段、插件、分发/签名、平台差异、安全硬化）时再引用它。
+- 若两者描述不同：以本 skill 的项目约束为准，再用 tauri skill 补齐实现细节。
+- 需要更深入的 Tauri 细节时，优先阅读 `references/tauri-advanced.md`，避免一次性加载过多通用资料。
+
 ## 核心目标
 - 可理解：用户一眼看懂当前模式与状态
 - 可恢复：关键参数有默认值与回退路径
