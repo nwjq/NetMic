@@ -1,6 +1,11 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(01:45+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=146）；sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）已复核。
+- DONE(01:45+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3，progress=d9746cc5bb）；确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:45+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M0-virtual-mic-20260128-2` 已 done。
+- NEXT(01:45+08): 协助 builder-linux 补齐 sox/paplay 依赖并重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，回写稳定性结论。
+- TEST(01:45+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(01:39+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=141）。
 - DONE(01:39+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass）；确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(01:39+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-2` 已 done，`M0-virtual-mic-20260128-3` 仍 queued（priority=high）；`/v1/events` 无新增阻塞信号。
@@ -146,3 +151,5 @@
 - NEXT(01:30+08): 若需推进真实 Runner 验证，优先认领 `M0-virtual-mic-20260128-2/-3` 并回写 module id/source 与 5 分钟 smoke 结论。
 - DONE(01:37+08): 真实 Linux Runner 验证 `scripts/linux/virtual_mic.sh` 幂等链路：create 成功并返回 module id（sink=536870917, source=536870918），虚拟 source 名称为 `netmic_source`（sink 为 `netmic_sink`）。
 - TEST(01:37+08): 依次运行 `scripts/linux/virtual_mic.sh create` → `status` → `create`(幂等) → `remove` → `status`；最后一次 status 返回 not found（warn）符合预期。
+- DONE(01:42+08): 真实 Linux Runner 运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；虚拟 sink/source 创建成功并检测到 source（netmic_smoke_source_139213），但缺少 `sox` 导致测试音生成失败，写入被跳过，链路仅验证到创建层面（需补依赖后重测）。
+- TEST(01:42+08): 执行 `scripts/linux/virtual_mic_smoke.sh --duration 300`（300s）；输出 `FAIL: 缺少命令：sox` / `WARN: 缺少 sox 或生成测试音失败`。
