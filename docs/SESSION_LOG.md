@@ -100,7 +100,11 @@
 - DONE(01:16+08): Hub 任务/事件快照无门禁变化：done 任务保持 done；`M0-virtual-mic-20260128-{1,2,3}` 仍 queued，当前无新 claim。
 - NEXT(01:16+08): 继续以 M0 真实 Runner 验证为主线，优先推动 `M0-virtual-mic-20260128-1` 被认领并回写 machine-readable 自检结论。
 - TEST(01:16+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
-- DONE(01:20+08): builder-linux 认领 `M0-virtual-mic-20260128-1`：修复 `audio_selfcheck.sh --json` 在极简 PATH（无 `cat`）下不输出 JSON 的问题，改为仅使用 shell 内建 `printf`，确保 pactl 缺失场景输出 `pactl_available=false`。
-- BLOCKER(01:20+08): 真实 runner 当前 `pactl info` 返回空（音频服务可能未运行），`audio_selfcheck.sh --json/--smoke --json` 均为 `NOT_READY`（reason=无法读取服务端信息）。
-- NEXT(01:20+08): 在具备 PipeWire/Pulse 兼容层的 runner 上复跑 `scripts/linux/audio_selfcheck.sh --smoke --json`，并继续推进 `M0-virtual-mic-20260128-2/-3`。
-- TEST(01:20+08): 运行 `scripts/linux/audio_selfcheck_test.sh`（通过）；运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass）；运行 `scripts/linux/audio_selfcheck.sh --json` 与 `--smoke --json`（均输出 JSON，但环境 NOT_READY）。
+- DONE(01:19+08): orchestrator 清单复跑并确认 `scripts/linux/audio_selfcheck.sh --json` 的稳健实现已在提交 `7e40033` 落地；本轮将事实来源对齐到文档：更新 `docs/ROADMAP.md` 的 M0 自检条目，明确优先使用 `--json`。
+- DONE(01:19+08): 通过 Hub `task_update` 为 `M0-virtual-mic-20260128-1` 写入“脚本侧已具备 --json、仍需真实 runner 验证”的摘要，并执行 `release_task(status=queued)` 清空 claimed_by，避免任务被“幽灵认领”卡住队列。
+- NEXT(01:19+08): builder-linux 在真实 Linux Runner 上执行 `scripts/linux/audio_selfcheck.sh --json` 与 `--smoke --json`，把真实环境结论回写 `docs/SESSION_LOG.md`，随后推进 `M0-virtual-mic-20260128-2/-3`。
+- TEST(01:19+08): 运行 `bash scripts/linux/audio_selfcheck_test.sh`（通过）；运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass）；运行 Hub `task_update` + `release_task(status=queued)` 刷新 `M0-virtual-mic-20260128-1` 摘要且清空 claimed_by。
+- DONE(01:22+08): scribe 清单复跑并重新 `register`（event_id=109）；`python3 scripts/verify_mvp.py` 仍为 M0–M3 全 pass，`.autopilot/research_mode.txt` 不存在。
+- DONE(01:22+08): Hub 快照出现关键状态推进：`M0-virtual-mic-20260128-1` 已为 done；`M0-virtual-mic-20260128-2/-3` 仍 queued，当前未见新的 claim。
+- NEXT(01:22+08): 以 M0 真实 Runner 验证为主线，优先推动/协助 builder-linux 认领 `M0-virtual-mic-20260128-2`（幂等 create/status/remove）并回写 module id/source 名称。
+- TEST(01:22+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s \"$HUB/v1/register\"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s \"$HUB/v1/{tasks,events}\"`（均成功）。
