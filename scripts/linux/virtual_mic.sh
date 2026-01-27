@@ -153,7 +153,9 @@ create_action() {
   read_state
 
   if source_exists; then
-    log "检测到已存在虚拟麦克风：$SOURCE_NAME（执行幂等 create）"
+    # 注意：在 UTF-8 locale 下，中文括号可能被 bash 误判为变量名的一部分。
+    # 使用 ${VAR} 形式避免 set -u 误报 unbound variable。
+    log "检测到已存在虚拟麦克风：${SOURCE_NAME}（执行幂等 create）"
     if [[ -z "${SINK_MODULE_ID:-}" ]]; then
       SINK_MODULE_ID="$(find_module_id module-null-sink "sink_name=${SINK_NAME}")"
     fi
@@ -243,4 +245,3 @@ main() {
 }
 
 main
-

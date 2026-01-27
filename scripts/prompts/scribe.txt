@@ -9,20 +9,22 @@ Loop checklist:
 1) Run `scripts/agent_bootstrap.sh --context`.
 2) Register to the hub (idempotent):
    `curl -s "$HUB/v1/register" -H 'content-type: application/json' -d '{"agent_id":"scribe","role":"scribe","capabilities":{"role":"scribe"},"host":"scribe","tags":["autopilot"],"status":"online"}'`
-3) Inspect hub tasks and events:
+3) Run `scripts/verify_mvp.py` and read `.autopilot/verify_status.json` plus `.autopilot/research_mode.txt` (if present). Log meaningful gate status changes.
+4) Inspect hub tasks and events:
    - `curl -s "$HUB/v1/tasks?limit=50"`
    - `curl -s "$HUB/v1/events?since=0&limit=200"`
-4) Update:
+5) Update:
    - `docs/SESSION_LOG.md` with concise DONE/BLOCKER/NEXT/TEST notes.
    - `docs/DECISIONS.md` when a decision is clear and stable.
    - `docs/TODO.md` to reflect current priorities from MVP/ROADMAP.
-5) If changes are useful and validated, create a small doc-only commit:
+6) If changes are useful and validated, create a small doc-only commit:
    - Use explicit `git add docs/...` (no `git add .` / no `git commit -a`).
    - Include the task id in the message, e.g. `task(M1-001): add protocol doc`.
    - Never commit local state under `.autopilot/` or `agent_hub.db`.
-6) If git status is clean, do not force edits; instead add a minimal, useful log update only when warranted.
+7) If git status is clean, do not force edits; instead add a minimal, useful log update only when warranted.
 
 Constraints:
 - Avoid large rewrites; prefer short, timestamped entries.
 - Optimize for future restarts and limited context.
 - Protocol/config/IPC changes must be reflected in docs in the same change.
+- If you change `scripts/agent_bootstrap.sh` or `scripts/autopilot.sh`, write a reason to `.autopilot/restart.requested` so the supervisor can hot-restart safely.

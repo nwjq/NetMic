@@ -37,6 +37,7 @@ scripts/agent_bootstrap.sh
 - 在 Hub 不健康且为本机地址时自动拉起 `agent-hub/agent_hub.py`。
 - 注入任务种子（`scripts/seed_tasks.py`），保证有活可干。
 - 在 cargo 可用时自动创建 Rust 工作区骨架（`scripts/bootstrap/bootstrap_workspace.sh`）。
+- 周期性执行 MVP Gate 验证（`scripts/verify_mvp.py`），以 `docs/MVP_GATES.yaml` 作为机器可读验收标准。
 - 启动 `scripts/autopilot.sh start`（后台跑 agent 循环），并在前台持续刷新状态。
 - Hub 地址会写入 `.autopilot/runtime_hub_url.txt`（避免污染 Git）；`.autopilot/hub_url.txt` 仅作为只读兼容输入。
 
@@ -45,6 +46,50 @@ scripts/agent_bootstrap.sh
   - `scripts/agent_bootstrap.sh --stop`
 - 如果出现权限/安全/依赖阻塞，监督器会在控制台顶部提示“需要用户处理的事项”，并持续轮询状态。
 - 若存在关键阻塞项（例如缺少 cargo、codex 未登录），监督器会暂停启动 autopilot，避免产生不可控改动；解决后重跑即可。
+- 若同一失败签名在 Gate 验证中重复出现，监督器会进入“研究模式”（写入 `.autopilot/research_mode.txt`），提示 agent 先调研再修复。
+
+## Gate 验证（单命令真相）
+
+核心文件：
+- Gate 定义：`docs/MVP_GATES.yaml`
+- 验证入口：`scripts/verify_mvp.py`
+- 监督器状态：`.autopilot/verify_status.json` / `.autopilot/verify_status.txt`
+
+手动运行：
+```bash
+cd /path/to/NetMic
+scripts/verify_mvp.py
+```
+
+设计要点：
+- Gate 以里程碑（M0/M1/M2/M3）组织，监督器只推进到“第一个未通过 Gate”。
+- 验证结果统一为 `pass/fail/blocked`，其中 `blocked` 表示环境/权限/依赖阻塞，应优先修环境而不是盲改代码。
+- 修改协议/参数/验收标准时，应在同一次变更中同步更新 `docs/MVP_GATES.yaml` 与相关文档。
+
+## 研究模式（失败签名 → 调研 → 修复 → 再验证）
+
+触发逻辑（由监督器自动执行）：
+- 当同一失败签名连续重复达到阈值（默认 3 次），且不在冷却期内，进入研究模式。
+
+研究模式产物：
+- `.autopilot/research_mode.json`
+- `.autopilot/research_mode.txt`
+
+建议 agent 行为：
+- 优先查官方文档/主仓库/primary sources，先解释根因假设，再提交最小可验证修复。
+- 修复后必须重新运行 `scripts/verify_mvp.py`，以 Gate 结果作为是否继续推进的依据。
+
+## 安全自更新与热重启（监督器护栏）
+
+当 agent 修改了监督器/自动驾驶脚本（例如 `scripts/agent_bootstrap.sh` 或 `scripts/autopilot.sh`）时，建议写入重启请求：
+
+```bash
+printf '%s\n' \"reason: updated bootstrap/autopilot\" > .autopilot/restart.requested
+```
+
+行为说明：
+- 监督器会检测 `.autopilot/restart.requested`，并在冷却时间与每小时次数护栏内执行 `exec scripts/agent_bootstrap.sh` 热重启。
+- 相关运行态文件位于 `.autopilot/`，已在 `.gitignore` 中忽略，不应进入版本控制。
 
 ## 跨机配置（可选，但想全自动建议配置）
 为避免每次手动 export，监督器会自动读取：

@@ -87,3 +87,4 @@ CI 失败修复：`gh-fix-ci`
 - M1：默认参数端到端跑通  
 - M2：参数可调 + 自动回退  
 - M3：稳定性与恢复达标
+- 自动化验收入口：`scripts/verify_mvp.py`（以 `docs/MVP_GATES.yaml` 为机器可读标准）

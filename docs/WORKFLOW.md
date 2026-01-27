@@ -12,6 +12,7 @@ scripts/agent_bootstrap.sh
 ```
 
 该脚本会以前台监督器的形式自动自检、启动 Hub/autopilot，并在阻塞时置顶提示需要用户执行的动作。
+如需“单命令真相”的里程碑判定，请运行：`scripts/verify_mvp.py`（标准来自 `docs/MVP_GATES.yaml`）。
 
 ---
 

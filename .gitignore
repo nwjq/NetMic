@@ -7,6 +7,12 @@
 .autopilot/runner.env
 .autopilot/runtime_hub_url.txt
 .autopilot/workspace_bootstrap.done
+.autopilot/verify_status.json
+.autopilot/verify_status.txt
+.autopilot/research_mode.json
+.autopilot/research_mode.txt
+.autopilot/supervisor_state.env
+.autopilot/restart.requested
 
 # Agent Hub 本地数据库
 agent_hub.db

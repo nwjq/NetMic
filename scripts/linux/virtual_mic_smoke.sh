@@ -176,7 +176,8 @@ play_into_sink() {
 
 run_smoke_audio() {
   local wav_file
-  wav_file="$(mktemp --suffix .wav)"
+  # 兼容 macOS（BSD mktemp 不支持 --suffix）。
+  wav_file="$(mktemp "${TMPDIR:-/tmp}/netmic_smoke_XXXXXX")"
 
   if ! generate_sine_wav "$wav_file"; then
     rm -f "$wav_file"

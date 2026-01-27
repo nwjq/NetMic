@@ -17,12 +17,25 @@ RUNNER_ENV_EXAMPLE="$STATE_DIR/runner.env.example"
 HUB_URL_SHARED_FILE="$ROOT/docs/HUB_URL.txt"
 BOOTSTRAP_LOG="$LOG_DIR/bootstrap.log"
 WORKSPACE_MARKER="$STATE_DIR/workspace_bootstrap.done"
+SUPERVISOR_STATE_FILE="$STATE_DIR/supervisor_state.env"
+VERIFY_GATES_FILE="${BOOTSTRAP_VERIFY_GATES_FILE:-$ROOT/docs/MVP_GATES.yaml}"
+VERIFY_JSON="$STATE_DIR/verify_status.json"
+VERIFY_TEXT="$STATE_DIR/verify_status.txt"
+RESEARCH_MODE_FILE="$STATE_DIR/research_mode.json"
+RESEARCH_MODE_TEXT="$STATE_DIR/research_mode.txt"
+RESTART_REQUEST_FILE="$STATE_DIR/restart.requested"
 
 REFRESH_SECONDS="${BOOTSTRAP_REFRESH_SECONDS:-15}"
 CONTEXT_ONLY="${BOOTSTRAP_CONTEXT_ONLY:-0}"
 ONCE=0
 STATUS_ONLY=0
 STOP_ONLY=0
+# verify/gate 轮询与研究/重启护栏参数。
+VERIFY_INTERVAL_SECONDS="${BOOTSTRAP_VERIFY_INTERVAL_SECONDS:-300}"
+RESEARCH_TRIGGER_REPEATS="${BOOTSTRAP_RESEARCH_TRIGGER_REPEATS:-3}"
+RESEARCH_COOLDOWN_SECONDS="${BOOTSTRAP_RESEARCH_COOLDOWN_SECONDS:-1800}"
+RESTART_COOLDOWN_SECONDS="${BOOTSTRAP_RESTART_COOLDOWN_SECONDS:-120}"
+RESTART_LIMIT_PER_HOUR="${BOOTSTRAP_RESTART_LIMIT_PER_HOUR:-4}"
 # 是否允许脚本自动安装 Rust 工具链（默认开启，可显式设为 0 关闭）。
 AUTO_INSTALL_RUST="${NETMIC_AUTO_INSTALL_RUST:-1}"
 RUSTUP_PROFILE="${NETMIC_RUSTUP_PROFILE:-minimal}"
@@ -92,6 +105,354 @@ offline_tasks_summary() {
   echo
 }
 
+# -------- 监督器状态与 Gate 验证 --------
+SUPERVISOR_LAST_VERIFY_TS=0
+SUPERVISOR_LAST_FAILURE_SIGNATURE=""
+SUPERVISOR_FAILURE_REPEAT_COUNT=0
+SUPERVISOR_LAST_RESEARCH_TS=0
+SUPERVISOR_LAST_RESTART_TS=0
+SUPERVISOR_RESTART_WINDOW_START_TS=0
+SUPERVISOR_RESTART_COUNT=0
+SUPERVISOR_LAST_PROGRESS_SIGNATURE=""
+SUPERVISOR_LAST_OVERALL_STATUS=""
+SUPERVISOR_LAST_ACTIVE_GATE=""
+
+load_supervisor_state() {
+  # 先给默认值，避免 set -u 触发未绑定变量。
+  SUPERVISOR_LAST_VERIFY_TS=0
+  SUPERVISOR_LAST_FAILURE_SIGNATURE=""
+  SUPERVISOR_FAILURE_REPEAT_COUNT=0
+  SUPERVISOR_LAST_RESEARCH_TS=0
+  SUPERVISOR_LAST_RESTART_TS=0
+  SUPERVISOR_RESTART_WINDOW_START_TS=0
+  SUPERVISOR_RESTART_COUNT=0
+  SUPERVISOR_LAST_PROGRESS_SIGNATURE=""
+  SUPERVISOR_LAST_OVERALL_STATUS=""
+  SUPERVISOR_LAST_ACTIVE_GATE=""
+  if [[ -f "$SUPERVISOR_STATE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$SUPERVISOR_STATE_FILE"
+  fi
+}
+
+save_supervisor_state() {
+  cat >"$SUPERVISOR_STATE_FILE" <<EOF
+SUPERVISOR_LAST_VERIFY_TS=${SUPERVISOR_LAST_VERIFY_TS:-0}
+SUPERVISOR_LAST_FAILURE_SIGNATURE=${SUPERVISOR_LAST_FAILURE_SIGNATURE:-}
+SUPERVISOR_FAILURE_REPEAT_COUNT=${SUPERVISOR_FAILURE_REPEAT_COUNT:-0}
+SUPERVISOR_LAST_RESEARCH_TS=${SUPERVISOR_LAST_RESEARCH_TS:-0}
+SUPERVISOR_LAST_RESTART_TS=${SUPERVISOR_LAST_RESTART_TS:-0}
+SUPERVISOR_RESTART_WINDOW_START_TS=${SUPERVISOR_RESTART_WINDOW_START_TS:-0}
+SUPERVISOR_RESTART_COUNT=${SUPERVISOR_RESTART_COUNT:-0}
+SUPERVISOR_LAST_PROGRESS_SIGNATURE=${SUPERVISOR_LAST_PROGRESS_SIGNATURE:-}
+SUPERVISOR_LAST_OVERALL_STATUS=${SUPERVISOR_LAST_OVERALL_STATUS:-}
+SUPERVISOR_LAST_ACTIVE_GATE=${SUPERVISOR_LAST_ACTIVE_GATE:-}
+EOF
+}
+
+clear_research_mode() {
+  rm -f "$RESEARCH_MODE_FILE" "$RESEARCH_MODE_TEXT"
+}
+
+parse_verify_json() {
+  local json_file="$1"
+  if [[ ! -f "$json_file" ]]; then
+    return 1
+  fi
+  python3 - "$json_file" <<'PY'
+import json
+import shlex
+import sys
+
+path = sys.argv[1]
+try:
+    data = json.load(open(path, "r", encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+
+overall = data.get("overall", {}) or {}
+failure = overall.get("failure") or {}
+
+def emit(key: str, value):
+    if value is None:
+        return
+    print(f"{key}={shlex.quote(str(value))}")
+
+emit("VERIFY_GENERATED_AT", data.get("generated_at"))
+emit("VERIFY_OVERALL_STATUS", overall.get("overall_status"))
+emit("VERIFY_ACTIVE_GATE", overall.get("active_gate_id"))
+emit("VERIFY_PROGRESS_SIGNATURE", overall.get("progress_signature"))
+emit("VERIFY_FAILURE_SIGNATURE", overall.get("failure_signature"))
+emit("VERIFY_FAILURE_GATE", failure.get("gate_id"))
+emit("VERIFY_FAILURE_CHECK", failure.get("check_id"))
+emit("VERIFY_FAILURE_STATUS", failure.get("status"))
+emit("VERIFY_FAILURE_EXIT", failure.get("exit_code"))
+emit("VERIFY_FAILURE_HINT", failure.get("hint"))
+emit("VERIFY_FAILURE_RUN", failure.get("run"))
+PY
+}
+
+trigger_research_mode() {
+  local reason="$1"
+  if [[ ! -f "$VERIFY_JSON" ]]; then
+    return 1
+  fi
+  python3 - "$VERIFY_JSON" "$RESEARCH_MODE_FILE" "$RESEARCH_MODE_TEXT" "$reason" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+verify_path, research_json, research_txt, reason = sys.argv[1:5]
+
+def now():
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+try:
+    data = json.load(open(verify_path, "r", encoding="utf-8"))
+except Exception as exc:
+    payload = {"ok": False, "error": str(exc), "reason": reason, "generated_at": now()}
+    open(research_json, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    open(research_txt, "w", encoding="utf-8").write("research mode: failed to read verify_status.json\n")
+    sys.exit(0)
+
+overall = data.get("overall", {}) or {}
+failure = overall.get("failure") or {}
+
+payload = {
+    "ok": True,
+    "triggered_at": now(),
+    "reason": reason,
+    "overall_status": overall.get("overall_status"),
+    "active_gate_id": overall.get("active_gate_id"),
+    "failure_signature": overall.get("failure_signature"),
+    "failure": failure,
+    "instructions": [
+        "优先查官方文档/主仓库/primary sources，避免二手答案。",
+        "先解释失败签名与根因假设，再给出最小可验证修复。",
+        "修复后必须重新运行 scripts/verify_mvp.py 验证 Gate 状态。",
+        "若修改 scripts/agent_bootstrap.sh 或 scripts/autopilot.sh，请写入 .autopilot/restart.requested 请求热重启。",
+    ],
+}
+
+open(research_json, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+lines = [
+    "== NetMic 研究模式（Research Mode）==",
+    f"time:    {payload['triggered_at']}",
+    f"reason:  {reason}",
+    f"status:  {payload.get('overall_status')}",
+    f"active:  {payload.get('active_gate_id')}",
+    f"sign:    {payload.get('failure_signature')}",
+    "",
+]
+
+if failure:
+    lines.extend(
+        [
+            "-- failure --",
+            f"gate/check: {failure.get('gate_id')}/{failure.get('check_id')}",
+            f"hint:       {failure.get('hint')}",
+            f"run:        {failure.get('run')}",
+            "",
+        ]
+    )
+
+lines.append("建议动作：")
+for idx, item in enumerate(payload["instructions"], start=1):
+    lines.append(f"{idx}. {item}")
+lines.append("")
+
+open(research_txt, "w", encoding="utf-8").write("\n".join(lines))
+PY
+}
+
+verify_due() {
+  local now_ts="$1"
+  local last_ts="${SUPERVISOR_LAST_VERIFY_TS:-0}"
+  (( now_ts - last_ts >= VERIFY_INTERVAL_SECONDS ))
+}
+
+run_verify_if_due() {
+  local hub_url="$1"
+  local now_ts="$2"
+
+  if ! verify_due "$now_ts"; then
+    return 0
+  fi
+
+  if [[ ! -x scripts/verify_mvp.py ]]; then
+    add_action "缺少 scripts/verify_mvp.py：无法执行 MVP Gate 验证。"
+    SUPERVISOR_LAST_VERIFY_TS="$now_ts"
+    save_supervisor_state
+    return 1
+  fi
+
+  if [[ ! -f "$VERIFY_GATES_FILE" ]]; then
+    add_action "缺少 Gate 定义：$VERIFY_GATES_FILE"
+    SUPERVISOR_LAST_VERIFY_TS="$now_ts"
+    save_supervisor_state
+    return 1
+  fi
+
+  echo "[$(ts_now)] 运行 MVP Gate 验证（interval=${VERIFY_INTERVAL_SECONDS}s）" >>"$BOOTSTRAP_LOG"
+  HUB_URL="$hub_url" scripts/verify_mvp.py \
+    --gates "$VERIFY_GATES_FILE" \
+    --state-dir "$STATE_DIR" \
+    --json-out "$VERIFY_JSON" \
+    --text-out "$VERIFY_TEXT" \
+    --hub-url "$hub_url" >>"$BOOTSTRAP_LOG" 2>&1 || true
+
+  SUPERVISOR_LAST_VERIFY_TS="$now_ts"
+
+  local parsed=""
+  parsed="$(parse_verify_json "$VERIFY_JSON" 2>/dev/null || true)"
+  if [[ -n "$parsed" ]]; then
+    eval "$parsed"
+  fi
+
+  local overall="${VERIFY_OVERALL_STATUS:-}"
+  local failure_sig="${VERIFY_FAILURE_SIGNATURE:-}"
+  local progress_sig="${VERIFY_PROGRESS_SIGNATURE:-}"
+
+  if [[ -n "$progress_sig" && "$progress_sig" != "${SUPERVISOR_LAST_PROGRESS_SIGNATURE:-}" ]]; then
+    add_action "Gate 进度签名发生变化：${SUPERVISOR_LAST_PROGRESS_SIGNATURE:-none} → $progress_sig"
+    SUPERVISOR_LAST_PROGRESS_SIGNATURE="$progress_sig"
+  fi
+
+  if [[ "$overall" == "pass" ]]; then
+    SUPERVISOR_LAST_FAILURE_SIGNATURE=""
+    SUPERVISOR_FAILURE_REPEAT_COUNT=0
+    clear_research_mode
+  elif [[ -n "$failure_sig" ]]; then
+    if [[ "$failure_sig" == "${SUPERVISOR_LAST_FAILURE_SIGNATURE:-}" ]]; then
+      SUPERVISOR_FAILURE_REPEAT_COUNT=$((SUPERVISOR_FAILURE_REPEAT_COUNT + 1))
+    else
+      SUPERVISOR_LAST_FAILURE_SIGNATURE="$failure_sig"
+      SUPERVISOR_FAILURE_REPEAT_COUNT=1
+      # 失败签名变化说明出现了新信息，清理旧的 research mode，避免误导。
+      clear_research_mode
+    fi
+
+    local since_research=$((now_ts - ${SUPERVISOR_LAST_RESEARCH_TS:-0}))
+    if (( SUPERVISOR_FAILURE_REPEAT_COUNT >= RESEARCH_TRIGGER_REPEATS )) && (( since_research >= RESEARCH_COOLDOWN_SECONDS )); then
+      if trigger_research_mode "repeat_failure_signature"; then
+        SUPERVISOR_LAST_RESEARCH_TS="$now_ts"
+        add_action "同一失败签名已重复 ${SUPERVISOR_FAILURE_REPEAT_COUNT} 次：已进入研究模式（$RESEARCH_MODE_TEXT）。"
+      else
+        add_action "研究模式触发失败：请检查 $VERIFY_JSON"
+      fi
+    fi
+  fi
+
+  SUPERVISOR_LAST_OVERALL_STATUS="${overall:-}"
+  SUPERVISOR_LAST_ACTIVE_GATE="${VERIFY_ACTIVE_GATE:-}"
+  save_supervisor_state
+}
+
+summarize_verify_status() {
+  if [[ ! -f "$VERIFY_JSON" ]]; then
+    echo "verify: (尚未生成 verify_status.json)"
+    return 0
+  fi
+  python3 - "$VERIFY_JSON" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    data = json.load(open(path, "r", encoding="utf-8"))
+except Exception as exc:
+    print(f"verify: 读取失败 ({exc})")
+    sys.exit(0)
+
+overall = data.get("overall", {}) or {}
+gates = data.get("gates", []) or []
+
+generated_at = data.get("generated_at", "?")
+status = overall.get("overall_status", "?")
+active = overall.get("active_gate_id", "?")
+progress = overall.get("progress_signature", "none")
+failure_sig = overall.get("failure_signature", "")
+
+print(f"verify: last={generated_at} status={status} active={active} progress={progress}")
+if failure_sig:
+    print(f"verify: failure_signature={failure_sig}")
+
+if gates:
+    parts = []
+    for gate in gates:
+        gid = gate.get("gate_id", "?")
+        gst = gate.get("status", "?")
+        parts.append(f"{gid}:{gst}")
+    print("gates:  " + ", ".join(parts))
+
+failure = overall.get("failure") or {}
+if failure:
+    gate_id = failure.get("gate_id", "?")
+    check_id = failure.get("check_id", "?")
+    hint = failure.get("hint") or ""
+    hint = hint[:120] + ("…" if len(hint) > 120 else "")
+    print(f"failure: {gate_id}/{check_id} hint={hint}")
+PY
+}
+
+research_mode_hint() {
+  if [[ ! -f "$RESEARCH_MODE_TEXT" ]]; then
+    return 0
+  fi
+  echo "-- RESEARCH MODE --"
+  head -n 12 "$RESEARCH_MODE_TEXT" 2>/dev/null || true
+  echo
+}
+
+check_restart_requested() {
+  local now_ts="$1"
+  if [[ ! -f "$RESTART_REQUEST_FILE" ]]; then
+    return 0
+  fi
+
+  # 限流：每小时最多重启 N 次，且两次重启至少间隔冷却时间。
+  local window_start="${SUPERVISOR_RESTART_WINDOW_START_TS:-0}"
+  local restart_count="${SUPERVISOR_RESTART_COUNT:-0}"
+  if (( window_start == 0 || now_ts - window_start >= 3600 )); then
+    window_start="$now_ts"
+    restart_count=0
+  fi
+
+  local since_last=$((now_ts - ${SUPERVISOR_LAST_RESTART_TS:-0}))
+  if (( since_last < RESTART_COOLDOWN_SECONDS )); then
+    add_action "检测到重启请求但仍在冷却期（${since_last}s < ${RESTART_COOLDOWN_SECONDS}s）：$RESTART_REQUEST_FILE"
+    SUPERVISOR_RESTART_WINDOW_START_TS="$window_start"
+    SUPERVISOR_RESTART_COUNT="$restart_count"
+    save_supervisor_state
+    return 0
+  fi
+
+  if (( restart_count >= RESTART_LIMIT_PER_HOUR )); then
+    add_action "重启次数超过护栏（${RESTART_LIMIT_PER_HOUR}/hour）：请人工检查 $RESTART_REQUEST_FILE"
+    SUPERVISOR_RESTART_WINDOW_START_TS="$window_start"
+    SUPERVISOR_RESTART_COUNT="$restart_count"
+    save_supervisor_state
+    return 0
+  fi
+
+  local reason=""
+  reason="$(head -n 1 "$RESTART_REQUEST_FILE" 2>/dev/null || true)"
+  add_action "检测到热重启请求：${reason:-no-reason}（将 exec 监督器）"
+  rm -f "$RESTART_REQUEST_FILE"
+
+  restart_count=$((restart_count + 1))
+  SUPERVISOR_LAST_RESTART_TS="$now_ts"
+  SUPERVISOR_RESTART_WINDOW_START_TS="$window_start"
+  SUPERVISOR_RESTART_COUNT="$restart_count"
+  # 热重启后尽快重新验证 Gate，避免长时间沿用旧结果。
+  SUPERVISOR_LAST_VERIFY_TS=0
+  save_supervisor_state
+
+  # 使用 exec 以便接管当前 PID，确保热重启生效。
+  exec "$ROOT/scripts/agent_bootstrap.sh"
+}
+
 # -------- 上下文摘要模式（用于 agent 循环） --------
 context_summary() {
   local hub_url="${HUB:-${HUB_URL:-}}"
@@ -149,6 +510,19 @@ context_summary() {
   if command -v gh >/dev/null 2>&1; then
     echo "-- Open issues (gh) --"
     gh issue list -L 10 || true
+    echo
+  fi
+
+  load_supervisor_state
+  if command -v python3 >/dev/null 2>&1; then
+    echo "-- MVP GATES --"
+    summarize_verify_status || true
+    echo
+  fi
+  research_mode_hint
+  if [[ -f "$RESTART_REQUEST_FILE" ]]; then
+    echo "-- RESTART REQUEST --"
+    head -n 3 "$RESTART_REQUEST_FILE" 2>/dev/null || true
     echo
   fi
 
@@ -649,6 +1023,21 @@ show_supervisor_screen() {
   summarize_hub_status "$hub_url" || true
   echo
 
+  echo "-- MVP GATE 验证 --"
+  if command -v python3 >/dev/null 2>&1; then
+    summarize_verify_status || true
+  else
+    echo "verify: unknown（缺少 python3）"
+  fi
+  echo
+
+  research_mode_hint
+  if [[ -f "$RESTART_REQUEST_FILE" ]]; then
+    echo "-- RESTART REQUEST --"
+    head -n 3 "$RESTART_REQUEST_FILE" 2>/dev/null || true
+    echo
+  fi
+
   echo "-- 进程状态 --"
   role_pid_line hub "$hub_url"
   role_pid_line orchestrator "$hub_url"
@@ -668,6 +1057,7 @@ show_supervisor_screen() {
 main_loop() {
   ensure_docs
   resolve_hub_url
+  load_supervisor_state
 
   local last_seed_ts=0
 
@@ -676,6 +1066,10 @@ main_loop() {
 
     resolve_hub_url
     local hub_url="$HUB_URL"
+
+    local restart_check_ts
+    restart_check_ts="$(date +%s)"
+    check_restart_requested "$restart_check_ts"
 
     start_hub_if_needed "$hub_url" || true
 
@@ -686,9 +1080,11 @@ main_loop() {
     # 仅在 cargo 可用时尝试一次骨架初始化。
     ensure_workspace_bootstrap || true
 
-    # 每 5 分钟尝试一次任务种子注入（Hub healthy 前提）。
     local now_ts
     now_ts="$(date +%s)"
+    run_verify_if_due "$hub_url" "$now_ts" || true
+
+    # 每 5 分钟尝试一次任务种子注入（Hub healthy 前提）。
     if (( now_ts - last_seed_ts >= 300 )); then
       seed_tasks_if_possible "$hub_url" || true
       last_seed_ts=$now_ts
