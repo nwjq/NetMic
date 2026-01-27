@@ -1,6 +1,10 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(06:49+08): 完成 `M3-proto-stats-snapshot-20260128-1`：补齐 `StatsSnapshot` 字段（buffer_depth_frames/buffer_depth_ms/audio_rms/audio_peak），并同步 `docs/PROTO.md` 与 `scripts/bootstrap/bootstrap_workspace.sh`。
+- TEST(06:49+08): 运行 `cargo test -p netmic-proto`（通过）。
+- BLOCKER(06:49+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(06:49+08): 推动 builder-mac 上线认领 `M1-client-cpal-capture-20260128-1`；或提供可由 builder-linux 执行的替代任务。
 - DONE(06:37+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=334）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(06:37+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(06:37+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
@@ -711,6 +715,3 @@
 - BLOCKER(06:49+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
 - NEXT(06:49+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`；若短期不可用，改派 builder-linux 可做的小任务。
 - TEST(06:49+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
-
-- DONE(06:50+08): 认领 `M3-proto-stats-snapshot-20260128-1`，确认 `StatsSnapshot` 已包含 buffer_depth_frames/buffer_depth_ms/audio_rms/audio_peak，`docs/PROTO.md` 统计快照描述已对齐，无需额外改动。
-- TEST(06:50+08): 运行 `cargo test -p netmic-proto`（通过）。
