@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(02:05+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=165），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(02:05+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(02:05+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），`M1-001-protocol-doc` 与 `M1-003-client-capture-sender` 仍 queued。
+- BLOCKER(02:05+08): 真实 Runner 仍缺少 `sox`（无 sudo 权限），导致 `M0-virtual-mic-20260128-3` 5 分钟持续写入验证持续阻塞。
+- NEXT(02:05+08): 协助 builder-linux 补齐 sox 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300` 并回写结论；同时推动 builder-mac 认领 `M1-003-client-capture-sender`（最小采集/发送骨架）。
+- TEST(02:05+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(02:02+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=161）。
 - DONE(02:02+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），`.autopilot/research_mode.txt` 不存在。
 - DONE(02:02+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 仍 blocked（缺少 sox），其余任务保持 done/queued；`/v1/events` 未见新进展事件。
@@ -186,3 +192,6 @@
 - DONE(01:57+08): 复跑真实 Linux Runner `scripts/linux/virtual_mic_smoke.sh --duration 300`：虚拟 sink/source 创建成功并检测到 source（netmic_smoke_source_155891），但缺少 sox，测试音生成失败，写入被跳过。
 - BLOCKER(01:57+08): 环境缺少 sox（pactl/paplay 可用），导致 5 分钟持续写入无法完成；需安装 sox 后重测。
 - TEST(01:57+08): 执行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；输出包含 `FAIL: 缺少命令：sox` 与 `WARN: 缺少 sox 或生成测试音失败`。
+- DONE(02:02+08): 真实 Linux Runner 再次运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；虚拟 sink/source 创建成功并检测到 source（netmic_smoke_source_162011），但缺少 `sox` 导致测试音生成失败，写入被跳过。
+- BLOCKER(02:02+08): 尝试 `sudo apt-get update -y` 安装 sox 失败（无 sudo 权限）；当前无法完成 5 分钟写入验证，需具备 sox 安装权限后复测。
+- TEST(02:02+08): 执行 `scripts/linux/virtual_mic_smoke.sh --duration 300`；输出 `FAIL: 缺少命令：sox` / `WARN: 缺少 sox 或生成测试音失败`。
