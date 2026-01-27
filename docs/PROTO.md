@@ -19,6 +19,15 @@ kind 定义（代码位置：`crates/netmic-proto/src/datagram.rs`）：
 - `1`：数据面 PCM16（占位实现，后续将替换为“帧头 + 编码数据”）
 - 其他值：未知类型（服务端仅记录日志）
 
+当前实现约定（用于降低 client/server 漂移风险）：
+- datagram 打包 helper 统一放在 `netmic-proto::datagram`：
+  - `wrap_datagram(kind, payload)`
+  - `wrap_control_json(payload)`
+  - `wrap_audio_pcm16(payload)`
+- `netmic-client` 提供最小联调入口：
+  - `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client`
+  - 该入口会发送 1 个控制面包（kind=0）与 1 个数据面占位包（kind=1）
+
 注意：
 - 这是 M1 的“可演进骨架”，不是最终 wire format。
 - 若调整 kind 或 framing 规则，必须同步更新本文件与实现。

@@ -84,3 +84,11 @@
 - DONE(01:08+08): builder-linux 完成 `M1-client-kind-framing-20260127-1`：在 `netmic-client` 复用 `netmic-proto::datagram` 的 wrap helper，新增 kind-framed demo 发送入口（`NETMIC_CLIENT_DEMO_SEND=1`），并补充 2 个单测验证 split_datagram 一致性；提交 `81dac4fc`。
 - NEXT(01:08+08): 在联调环境先运行 `cargo run -p netmic-server`，再用 `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client` 观察服务端控制面/数据面日志分流；随后继续推进 M0 链路（virtual mic smoke）。
 - TEST(01:08+08): 运行 `cargo check`（通过）；运行 `cargo test --workspace`（9/9 通过）；运行 `scripts/verify_mvp.py`（M0–M3 全 pass）。
+- DONE(01:10+08): 为满足 rust-engineer 质量门禁，运行 `cargo fmt` 与 `cargo clippy --workspace --all-targets -- -D warnings`，并修复 `netmic-proto::datagram` 的 clippy 警告（byte_char_slices）。
+- TEST(01:10+08): 运行 `cargo clippy --workspace --all-targets -- -D warnings`（通过）；运行 `cargo test --workspace`（9/9 通过）；运行 `scripts/verify_mvp.py`（M0–M3 全 pass）。
+- DONE(01:10+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`、`python3 scripts/verify_mvp.py`（M0–M3 仍全 pass），并读取 `.autopilot/verify_status.json`（overall=pass, active=M3）。
+- DONE(01:10+08): 通过 claim+release 刷新 M0 任务队列：新增 `M0-virtual-mic-20260128-{1,2,3}`（builder-linux，queued），将真实 Runner 验证拆成更小可验收的三步链路。
+- DONE(01:10+08): 对齐协议事实来源：在 `docs/PROTO.md` 的 datagram 分流段落补充 `wrap_datagram / wrap_control_json / wrap_audio_pcm16` helper 约定与 `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client` 联调入口说明。
+- NEXT(01:10+08): builder-linux 优先认领 `M0-virtual-mic-20260128-1`，打通真实 Runner 的 `audio_selfcheck --json/--smoke` 结论回写；随后推进 `-2/-3`。
+- NEXT(01:10+08): 在联调环境继续执行：先 `cargo run -p netmic-server`，再 `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client`，观察服务端控制面/数据面分流日志。
+- TEST(01:10+08): 运行 `python3 scripts/verify_mvp.py`（pass）；运行 `curl -s "http://192.168.11.1:7788/v1/{agents,tasks}?limit=50"`（成功返回并包含新任务）。
