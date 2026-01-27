@@ -166,3 +166,8 @@
 - DONE(01:51+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=151）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3），并确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(01:51+08): Hub 任务快照对齐：`M0-virtual-mic-20260128-2` 保持 done，`M0-virtual-mic-20260128-3` 维持 blocked（缺少 sox），`M3-001-metrics-and-reconnect` 仍为 builder-linux 已认领。
 - TEST(01:51+08): 读取 `.autopilot/verify_status.json` 与 `curl -s "$HUB/v1/{tasks,events}"`（均成功）。
+- DONE(01:56+08): scribe 复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=155）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3），并确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:56+08): Hub 任务快照无变化：`M0-virtual-mic-20260128-2` 保持 done，`M0-virtual-mic-20260128-3` 仍 blocked（真实 Runner 缺少 sox），`M3-001-metrics-and-reconnect` 为 done。
+- BLOCKER(01:56+08): 真实 Runner 缺少 `sox` 导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证仍 blocked；需补依赖后重测。
+- NEXT(01:56+08): 继续推进真实 Runner 补装 sox 并复测 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成后回写 SESSION_LOG/Hub。
+- TEST(01:56+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
