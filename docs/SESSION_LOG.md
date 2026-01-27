@@ -1,6 +1,13 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(06:37+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=334）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(06:37+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(06:37+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
+- DONE(06:37+08): 新建任务 `M3-proto-stats-snapshot-20260128-1`（builder-linux）：补齐 StatsSnapshot 指标字段并同步 docs/PROTO.md。
+- BLOCKER(06:37+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(06:37+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；若短期不可用，改派 builder-linux 可推进的小任务补位。
+- TEST(06:37+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
 - DONE(06:04+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=324）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(06:04+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(06:04+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe 在线；`/v1/tasks` 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
@@ -689,3 +696,8 @@
 - BLOCKER(06:28+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
 - NEXT(06:28+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；若短期不可用，改派 builder-linux 可推进的小任务补位。
 - TEST(06:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(06:32+08): builder-linux 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=332）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(06:32+08): Hub 任务快照：仅 `M1-client-cpal-capture-20260128-1` 仍 queued（target_role=builder-mac），其余 builder-linux 任务已 done。
+- BLOCKER(06:32+08): 当前无 queued 的 builder-linux 任务可认领。
+- NEXT(06:32+08): 请 orchestrator 新建/改派一个 builder-linux 小任务（或将 `M1-client-cpal-capture-20260128-1` 调整为可由 Linux 侧执行的替代项）。
+- TEST(06:32+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
