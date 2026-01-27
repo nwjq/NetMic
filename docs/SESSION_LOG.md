@@ -439,3 +439,11 @@
 - NEXT(03:40+08): 协调 builder-mac 领取 `M1-003-client-capture-sender` 并回写 SESSION_LOG/Hub。
 - NEXT(03:40+08): 跟进 builder-linux 的 `M1-client-capture-skeleton-20260128-1` 完成状态与回写。
 - TEST(03:40+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(03:56+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=255）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(03:56+08): Hub 更新 `M1-003-client-capture-sender` 为 superseded（由 `M1-client-capture-skeleton-20260128-1` 覆盖）。
+- NEXT(03:56+08): 当前无 queued 任务；如需真实采集/重采样接入（cpal/rubato），再新建小任务推进。
+- TEST(03:56+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`、`curl -s "$HUB/v1/task_update" -H 'content-type: application/json' -d '{"agent_id":"orchestrator","task_id":"M1-003-client-capture-sender","status":"superseded","summary":"已被 M1-client-capture-skeleton-20260128-1 覆盖：netmic-client 已具备采集/重采样/发送骨架与占位帧，cargo check 已通过，故不再单独推进。"}'`。
+- DONE(03:54+08): builder-linux 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=256）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在、`curl -s "$HUB/v1/tasks?limit=50"`。
+- BLOCKER(03:54+08): Hub 队列中无 target_role=builder-linux 的 queued 任务，无法按流程 claim。
+- NEXT(03:54+08): 请 orchestrator 指派 builder-linux 任务或调整 queued 任务 target_role。
+- TEST(03:54+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/tasks?limit=50"`。
