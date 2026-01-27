@@ -29,3 +29,7 @@
 - BLOCKER(20:09+08): 当前沙箱禁止绑定/访问 `127.0.0.1:7788`，无法通过 Hub 进行任务队列检查与 claim/release。
 - NEXT(20:09+08): 在可监听端口的 Runner 上重新执行 register + `/v1/agents` + `/v1/tasks`；若队列为空，运行 `scripts/seed_tasks.py --hub <hub>` 注入任务种子，并优先推进 M0 虚拟麦克风自检/写入链路。
 - TEST(20:09+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 `python3 -m py_compile scripts/seed_tasks.py`（成功）；Rust 侧因缺少 cargo 无法执行 `cargo check`。
+- DONE(20:18+08): 以 scribe 清单复跑 `scripts/agent_bootstrap.sh --context`，确认当前分支与文档上下文可读。
+- BLOCKER(20:18+08): 直连 Hub（`curl -s http://127.0.0.1:7788/v1/register|tasks|events`）均返回 exit=7，当前环境仍无法访问 `:7788`。
+- NEXT(20:18+08): 在可监听端口的 Runner 上复跑 register/tasks/events；若仍不可达，先检查 Hub 进程与端口占用，再考虑 `scripts/seed_tasks.py --hub <hub>` 补种子任务。
+- TEST(20:18+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 Hub 相关 curl（失败：exit=7，无法连接 `127.0.0.1:7788`）。
