@@ -796,3 +796,8 @@
 - TEST(07:32+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
 - DONE(07:36+08): 完成 `M1-doc-env-vars-20260128-1`：新增 `docs/ENV.md` 汇总 NETMIC_* 变量，并在 `docs/WORKFLOW.md` 增加入口说明。
 - TEST(07:36+08): 未运行测试（仅文档变更）。
+- DONE(07:49+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=367）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在，并刷新 Hub tasks/events。
+- DONE(07:49+08): Hub 任务快照：`M1-doc-env-vars-20260128-1` 已 done；`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac），其余任务 done/superseded。
+- BLOCKER(07:49+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
+- NEXT(07:49+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`；若短期不可用，改派 builder-linux 可做的小任务。
+- TEST(07:49+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
