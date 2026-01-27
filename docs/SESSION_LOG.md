@@ -605,3 +605,5 @@
 - TEST(05:28+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/agents?active_within=600&limit=50"`、`curl -s "$HUB/v1/tasks?limit=50"`。
 - DONE(05:31+08): 完成 `M1-server-audio-dump-sink-20260128-1`：netmic-server 增加 AudioSink/NullSink/FileDumpSink，支持通过 `NETMIC_SERVER_AUDIO_DUMP` 追加写入 PCM16 payload 并输出写入日志。
 - TEST(05:31+08): 运行 `cargo check -p netmic-server`。
+- DONE(05:32+08): Hub 显示 `M1-server-audio-dump-sink-20260128-1` 已 done（summary: AudioSink/NullSink/FileDumpSink 落盘，`NETMIC_SERVER_AUDIO_DUMP` 启用）。
+- NEXT(05:32+08): 继续协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
