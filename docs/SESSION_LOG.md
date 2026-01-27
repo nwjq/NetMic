@@ -1,6 +1,11 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(03:16+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=231），并复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(03:16+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(03:16+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 已 done（5 分钟写入完成，sox 缺失时改用 python3 生成 WAV），`M1-003-client-capture-sender` 仍 queued。
+- NEXT(03:16+08): 推动 builder-mac 认领并完成 `M1-003-client-capture-sender`（最小采集/发送骨架），并回写 SESSION_LOG/Hub。
+- TEST(03:16+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(03:15+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=232）。
 - DONE(03:15+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`（overall=pass, active=M3），确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(03:15+08): Hub 快照：`/v1/tasks` 显示 `M0-virtual-mic-20260128-3` 已 done（5 分钟 smoke 完成，缺少 sox 时改用 python3 生成 WAV fallback），`M1-003-client-capture-sender` 仍 queued。
