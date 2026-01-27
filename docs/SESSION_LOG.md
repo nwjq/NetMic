@@ -1,6 +1,13 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(04:35+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=282）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(04:35+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(04:35+08): Hub 快照：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 新增 `M3-server-audio-level-metrics-20260128-1` queued（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
+- DONE(04:35+08): 新建任务 `M3-server-audio-level-metrics-20260128-1`（builder-linux）：为 PCM16 payload 计算 RMS/peak 音频电平并输出到 metrics snapshot。
+- BLOCKER(04:35+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(04:35+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；builder-linux 认领 `M3-server-audio-level-metrics-20260128-1` 并回写 SESSION_LOG/Hub。
+- TEST(04:35+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(04:28+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=279）、`python3 scripts/verify_mvp.py`（M0–M3 全 pass，active=M3）、`cat .autopilot/verify_status.json`、确认 `.autopilot/research_mode.txt` 不存在、`curl -s "$HUB/v1/{tasks,events}"`。
 - DONE(04:28+08): Hub 任务快照：`M1-server-buffer-metrics-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac），其余任务无新状态变化。
 - BLOCKER(04:28+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
