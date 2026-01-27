@@ -66,3 +66,6 @@
 - DONE(00:57+08): Hub 状态检查：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；通过 claim+release 将 `BOOT-001-workspace-skeleton` 与 `BOOT-002-session-docs-init` 标记为 completed。
 - NEXT(00:57+08): 继续让 builder-linux 推进已认领的 `M1-002-server-udp-receiver`；若 M0 链路需要收敛，优先认领 `M0-virtual-mic-20260127-1`（结构化自检输出）。
 - TEST(00:57+08): 运行 `scripts/verify_mvp.py`；读取 `.autopilot/verify_status.json`；运行 `curl -s "$HUB/v1/agents?active_within=600&limit=50"` 与 `curl -s "$HUB/v1/tasks?limit=50"`。
+- DONE(00:59+08): 认领 `M1-002-server-udp-receiver` 并落地 UDP 接收骨架：新增 `netmic-proto::datagram` 首字节 kind 分流，占位实现控制面 JSON / 数据面 PCM16；服务端锁定首个发送方为 active client，其余来源记录 busy 日志。
+- NEXT(00:59+08): 在 `netmic-client` 侧对齐 kind framing（首字节 kind + payload），并逐步把控制面 JSON 从 `serde_json::Value` 收敛到具体结构体（握手/心跳）。
+- TEST(00:59+08): 运行 `cargo check`、`cargo test --workspace`（新增 datagram 单测 4/4 通过）、`scripts/verify_mvp.py`（M0–M3 全部 pass）。
