@@ -1,6 +1,12 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(06:54+08): scribe 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=343）。
+- DONE(06:54+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(06:54+08): Hub 快照：`/v1/tasks` 显示 `M3-proto-stats-snapshot-20260128-1` 已 done，`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac）。
+- BLOCKER(06:54+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(06:54+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；如短期不可用，改派 builder-linux 可推进的替代任务。
+- TEST(06:54+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
 - DONE(06:49+08): 完成 `M3-proto-stats-snapshot-20260128-1`：补齐 `StatsSnapshot` 字段（buffer_depth_frames/buffer_depth_ms/audio_rms/audio_peak），并同步 `docs/PROTO.md` 与 `scripts/bootstrap/bootstrap_workspace.sh`。
 - TEST(06:49+08): 运行 `cargo test -p netmic-proto`（通过）。
 - BLOCKER(06:49+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
