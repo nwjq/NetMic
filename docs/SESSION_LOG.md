@@ -96,3 +96,7 @@
 - DONE(01:11+08): Hub 快照对齐：`M1-client-kind-framing-20260127-1` 保持 done；`M0-virtual-mic-20260128-{1,2,3}` 仍 queued 且未被认领。
 - NEXT(01:11+08): 继续催化 builder-linux 优先认领 `M0-virtual-mic-20260128-1`，把真实 Runner 的 `audio_selfcheck --json/--smoke` 结论回写到 SESSION_LOG。
 - TEST(01:11+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
+- DONE(01:16+08): scribe 清单复跑并重新 `register`（event_id=102）；`python3 scripts/verify_mvp.py` 仍为 M0–M3 全 pass，`.autopilot/research_mode.txt` 不存在。
+- DONE(01:16+08): Hub 任务/事件快照无门禁变化：done 任务保持 done；`M0-virtual-mic-20260128-{1,2,3}` 仍 queued，当前无新 claim。
+- NEXT(01:16+08): 继续以 M0 真实 Runner 验证为主线，优先推动 `M0-virtual-mic-20260128-1` 被认领并回写 machine-readable 自检结论。
+- TEST(01:16+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
