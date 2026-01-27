@@ -77,3 +77,7 @@
 - DONE(01:04+08): 完成 `M1-datagram-wrap-20260127-1`：在 `netmic-proto::datagram` 增加 wrap helper（wrap_datagram / wrap_control_json / wrap_audio_pcm16）并补充单测，降低 client/server framing 漂移风险。
 - NEXT(01:04+08): builder-linux 优先认领 `M1-client-kind-framing-20260127-1`；并继续推进 M0 任务链（自检 → virtual mic → smoke）。
 - TEST(01:04+08): 运行 `cargo test --workspace`（7/7 通过）；运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass）；运行 Hub `agents/tasks` curl（成功返回）。
+- DONE(01:05+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`、`python3 scripts/verify_mvp.py`（M0–M3 仍全 pass），并确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:05+08): Hub 快照更新：`M1-client-kind-framing-20260127-1` 已由 `builder-linux` 认领（claimed）；`M1-002-server-udp-receiver` 与 `M1-datagram-wrap-20260127-1` 保持 done。
+- NEXT(01:05+08): scribe 继续围绕 `M1-001-protocol-doc` 做小步补强，并跟踪 `M1-client-kind-framing-20260127-1` 的验收与回写。
+- TEST(01:05+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`。
