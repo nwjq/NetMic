@@ -59,3 +59,10 @@
 - BLOCKER(20:19+08): `curl -s http://127.0.0.1:7788/...` 仍返回 exit=7（无法连接 Hub），本轮无法基于 Hub 任务/事件回写状态。
 - NEXT(20:19+08): 继续以 MVP/ROADMAP 为准维护文档；待可监听端口的 Runner 启动 Hub 后，优先补跑 `register` + `/v1/tasks` + `/v1/events` 并对齐 TODO。
 - TEST(20:19+08): 运行 `scripts/agent_bootstrap.sh --context`（成功）；运行 `curl -s $HUB/v1/{register,tasks,events}`（均 exit=7，符合当前沙箱限制）。
+
+## 2026-01-28
+- DONE(00:57+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`（成功）、Hub `register`（成功），并确认 sources of truth（`MVP.md` / `docs/ROADMAP.md` / `docs/MVP_GATES.yaml` / `docs/SESSION_LOG.md` / `docs/DECISIONS.md`）可读。
+- DONE(00:57+08): 运行 `scripts/verify_mvp.py`（M0–M3 全部 pass），并读取 `.autopilot/verify_status.json`（overall_status=pass, active=M3）。
+- DONE(00:57+08): Hub 状态检查：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；通过 claim+release 将 `BOOT-001-workspace-skeleton` 与 `BOOT-002-session-docs-init` 标记为 completed。
+- NEXT(00:57+08): 继续让 builder-linux 推进已认领的 `M1-002-server-udp-receiver`；若 M0 链路需要收敛，优先认领 `M0-virtual-mic-20260127-1`（结构化自检输出）。
+- TEST(00:57+08): 运行 `scripts/verify_mvp.py`；读取 `.autopilot/verify_status.json`；运行 `curl -s "$HUB/v1/agents?active_within=600&limit=50"` 与 `curl -s "$HUB/v1/tasks?limit=50"`。
