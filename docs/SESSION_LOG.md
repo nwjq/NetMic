@@ -92,3 +92,7 @@
 - NEXT(01:10+08): builder-linux 优先认领 `M0-virtual-mic-20260128-1`，打通真实 Runner 的 `audio_selfcheck --json/--smoke` 结论回写；随后推进 `-2/-3`。
 - NEXT(01:10+08): 在联调环境继续执行：先 `cargo run -p netmic-server`，再 `NETMIC_CLIENT_DEMO_SEND=1 cargo run -p netmic-client`，观察服务端控制面/数据面分流日志。
 - TEST(01:10+08): 运行 `python3 scripts/verify_mvp.py`（pass）；运行 `curl -s "http://192.168.11.1:7788/v1/{agents,tasks}?limit=50"`（成功返回并包含新任务）。
+- DONE(01:11+08): scribe 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`、`python3 scripts/verify_mvp.py`（M0–M3 仍全 pass），并确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(01:11+08): Hub 快照对齐：`M1-client-kind-framing-20260127-1` 保持 done；`M0-virtual-mic-20260128-{1,2,3}` 仍 queued 且未被认领。
+- NEXT(01:11+08): 继续催化 builder-linux 优先认领 `M0-virtual-mic-20260128-1`，把真实 Runner 的 `audio_selfcheck --json/--smoke` 结论回写到 SESSION_LOG。
+- TEST(01:11+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{tasks,events}"`（均成功）。
