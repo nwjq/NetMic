@@ -1,6 +1,11 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(01:34+08): orchestrator 清单复跑：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=134）、sources of truth 复核（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）均可读。
+- DONE(01:34+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），并读取 `.autopilot/verify_status.json`（overall=pass, active=M3）。
+- DONE(01:34+08): Hub 状态刷新：`/v1/agents` 显示 orchestrator/scribe/builder-linux 在线；`/v1/tasks` 显示 `M2-001-config-validation` 已 done，`M0-virtual-mic-20260128-2/-3` 仍 queued。
+- NEXT(01:34+08): 继续催化 builder-linux 认领并回写 `M0-virtual-mic-20260128-2/-3` 的真实 Runner 验证结论（module id/source + 5 分钟 smoke 结果）。
+- TEST(01:34+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`。
 - DONE(00:55+08): 以 scribe 清单复跑 `scripts/agent_bootstrap.sh --context`，Hub 健康检查恢复（`http://192.168.11.1:7788` 返回 ok）。
 - DONE(00:55+08): 按清单向 Hub 注册 scribe（`/v1/register` 返回 `ok: true`，event_id=69），并成功拉取 `/v1/tasks` 与 `/v1/events`。
 - DONE(00:54+08): 运行 `python3 scripts/verify_mvp.py`，`.autopilot/verify_status.json` 显示 M0–M3 全部为 pass（active=M3）。
