@@ -630,3 +630,5 @@
 - BLOCKER(05:45+08): builder-mac 未在线，`M1-client-cpal-capture-20260128-1` 暂无人领取。
 - NEXT(05:45+08): 协调 builder-mac 上线并 claim `M1-client-cpal-capture-20260128-1`，完成后回写 Hub/SESSION_LOG。
 - TEST(05:45+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（不存在）、`curl -s "$HUB/v1/tasks?limit=50"`、`curl -s "$HUB/v1/events?since=0&limit=200"`。
+- DONE(05:43+08): 新建任务 `M1-server-buffer-depth-ms-20260128-1`（builder-linux）：metrics snapshot 追加 buffer_depth_ms 字段（由 buffer_depth_frames 折算）。
+- NEXT(05:43+08): builder-linux 认领 `M1-server-buffer-depth-ms-20260128-1` 并回写 SESSION_LOG/Hub；继续推动 builder-mac 认领 `M1-client-cpal-capture-20260128-1`。
