@@ -360,3 +360,5 @@
 - BLOCKER(03:05+08): `sox` 仍缺失导致 `M0-virtual-mic-20260128-3` 5 分钟写入验证无法完成。
 - NEXT(03:05+08): 取得安装权限或预装 `sox` 后重跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`，完成 5 分钟持续写入验证并回写 Hub/SESSION_LOG。
 - TEST(03:05+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`cat .autopilot/research_mode.txt`（若存在）、`curl -s "$HUB/v1/{tasks,events}"`。
+- DONE(03:11+08): builder-linux 复跑 `scripts/linux/virtual_mic_smoke.sh --duration 300`；虚拟 sink/source 创建成功并写入 5 分钟测试音（sox 缺失时自动改用 python3 生成 WAV），smoke 完成。
+- TEST(03:11+08): 运行 `scripts/linux/virtual_mic_smoke.sh --duration 300`（耗时约 300s）。

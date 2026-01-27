@@ -147,16 +147,48 @@ create_virtual_mic() {
 
 generate_sine_wav() {
   local out_wav="$1"
-  require_cmd sox || return 1
+  if command -v sox >/dev/null 2>&1; then
+    # 生成固定时长的 48kHz/mono/16-bit 测试音，贴近内部标准格式。
+    sox -n \
+      -r 48000 \
+      -c 1 \
+      -b 16 \
+      -e signed-integer \
+      "$out_wav" \
+      synth "$DURATION_SEC" sine 440 >/dev/null 2>&1
+    return 0
+  fi
 
-  # 生成固定时长的 48kHz/mono/16-bit 测试音，贴近内部标准格式。
-  sox -n \
-    -r 48000 \
-    -c 1 \
-    -b 16 \
-    -e signed-integer \
-    "$out_wav" \
-    synth "$DURATION_SEC" sine 440 >/dev/null 2>&1
+  if command -v python3 >/dev/null 2>&1; then
+    log_warn "未检测到 sox，改用 python3 生成测试音"
+    python3 - "$out_wav" "$DURATION_SEC" <<'PY'
+import math
+import struct
+import sys
+import wave
+
+out_wav = sys.argv[1]
+duration = float(sys.argv[2])
+sample_rate = 48000
+freq = 440.0
+amp = 0.25
+total_samples = int(duration * sample_rate)
+
+with wave.open(out_wav, "wb") as wf:
+  wf.setnchannels(1)
+  wf.setsampwidth(2)
+  wf.setframerate(sample_rate)
+  frames = bytearray()
+  for n in range(total_samples):
+    sample = int(amp * 32767 * math.sin(2 * math.pi * freq * n / sample_rate))
+    frames.extend(struct.pack("<h", sample))
+  wf.writeframes(frames)
+PY
+    return $?
+  fi
+
+  log_fail "缺少命令：sox 或 python3"
+  return 1
 }
 
 play_into_sink() {
