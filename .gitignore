@@ -19,5 +19,4 @@ agent_hub.db
 
 # Python 临时产物
 __pycache__/
-target/.rustc_info.json
-target/debug/*
+target/*
