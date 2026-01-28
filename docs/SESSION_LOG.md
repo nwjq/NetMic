@@ -1,6 +1,13 @@
 # SESSION LOG
 
 ## 2026-01-28
+- DONE(08:13+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=375）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
+- DONE(08:13+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
+- DONE(08:13+08): 新建任务 `M1-server-bind-addr-20260128-1`（builder-linux，支持 NETMIC_SERVER_BIND_ADDR 绑定地址）。
+- DONE(08:13+08): netmic-server 新增 `NETMIC_SERVER_BIND_ADDR` 绑定地址支持并更新 `docs/ENV.md`；`cargo check -p netmic-server` 通过。
+- BLOCKER(08:13+08): `M1-client-cpal-capture-20260128-1` 仍 queued，builder-mac 未在线。
+- NEXT(08:13+08): 协调 builder-mac 上线并认领 `M1-client-cpal-capture-20260128-1`；若短期不可用，改派替代任务。
+- TEST(08:13+08): 运行 `scripts/agent_bootstrap.sh --context`、`curl -s "$HUB/v1/register"`、`python3 scripts/verify_mvp.py`、`cat .autopilot/verify_status.json`、`test -f .autopilot/research_mode.txt`、`cargo check -p netmic-server`、`curl -s "$HUB/v1/{agents,tasks}?limit=50"`、`curl -s "$HUB/v1/claim_task"`/`release_task`（M1-server-bind-addr-20260128-1）。
 - DONE(07:51+08): orchestrator 复跑清单：`scripts/agent_bootstrap.sh --context`、Hub `register`（event_id=364）、复核 sources of truth（MVP/ROADMAP/MVP_GATES/SESSION_LOG/DECISIONS）。
 - DONE(07:51+08): 运行 `python3 scripts/verify_mvp.py`（M0–M3 全 pass, active=M3），读取 `.autopilot/verify_status.json`，确认 `.autopilot/research_mode.txt` 不存在。
 - DONE(07:51+08): Hub 任务更新：`M1-doc-env-vars-20260128-1` 标记 done（docs/ENV.md + WORKFLOW 入口说明）。

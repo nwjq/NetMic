@@ -21,6 +21,8 @@ use tracing::{debug, info, warn};
 const DEFAULT_UDP_PORT: u16 = 43_000;
 /// 默认绑定地址（监听所有网卡）。
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0";
+/// 绑定地址环境变量（支持 host 或 host:port）。
+const ENV_BIND_ADDR: &str = "NETMIC_SERVER_BIND_ADDR";
 /// 单次接收缓冲区大小（足够容纳 MVP 小包）。
 const MAX_DATAGRAM_SIZE: usize = 1500;
 /// 读超时（用于避免无流量时永久阻塞，便于日志可观测）。
@@ -41,7 +43,7 @@ fn main() -> Result<()> {
     info!(?params, "netmic-server starting with MVP defaults");
 
     let port = udp_port_from_env();
-    let bind_addr = format!("{DEFAULT_BIND_ADDR}:{port}");
+    let bind_addr = bind_addr_from_env(port);
     let socket = bind_udp_socket(&bind_addr)?;
     let audio_sink = audio_sink_from_env()?;
 
@@ -66,6 +68,41 @@ fn udp_port_from_env() -> u16 {
         },
         Err(_) => DEFAULT_UDP_PORT,
     }
+}
+
+fn bind_addr_from_env(port: u16) -> String {
+    let default_addr = format!("{DEFAULT_BIND_ADDR}:{port}");
+    let Ok(raw) = env::var(ENV_BIND_ADDR) else {
+        return default_addr;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return default_addr;
+    }
+    if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+        info!(
+            env = ENV_BIND_ADDR,
+            value = %trimmed,
+            "NETMIC_SERVER_BIND_ADDR includes port, NETMIC_SERVER_UDP_PORT ignored"
+        );
+        return addr.to_string();
+    }
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        return format!("{trimmed}:{port}");
+    }
+    let colon_count = trimmed.matches(':').count();
+    if colon_count == 1 {
+        info!(
+            env = ENV_BIND_ADDR,
+            value = %trimmed,
+            "NETMIC_SERVER_BIND_ADDR includes port, NETMIC_SERVER_UDP_PORT ignored"
+        );
+        return trimmed.to_string();
+    }
+    if colon_count > 1 {
+        return format!("[{trimmed}]:{port}");
+    }
+    format!("{trimmed}:{port}")
 }
 
 fn bind_udp_socket(bind_addr: &str) -> Result<UdpSocket> {

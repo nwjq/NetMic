@@ -15,6 +15,9 @@
 
 ## Server（netmic-server）
 
+- `NETMIC_SERVER_BIND_ADDR`
+  - 默认值：`0.0.0.0`
+  - 用途：服务端 UDP 绑定地址（host 或 host:port）；如包含端口则优先使用该端口并忽略 `NETMIC_SERVER_UDP_PORT`。
 - `NETMIC_SERVER_UDP_PORT`
   - 默认值：`43000`
   - 用途：服务端 UDP 监听端口；若解析失败会回退到默认值。
