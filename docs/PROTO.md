@@ -85,6 +85,69 @@ Server → Client 为主
 - `audio_rms: f32`（占位，单位/算法后续冻结）
 - `audio_peak: u32`（占位，通常为 PCM16 |sample| 最大值）
 
+### 控制面 JSON 最小示例（占位）
+说明：
+- 以下示例仅用于**字段对齐**，示例值为占位。
+- 这里展示的是 JSON payload 本体（不包含 UDP `kind` 前缀）。
+
+**HandshakeRequest**
+```json
+{
+  "session_id": "session-uuid-placeholder",
+  "client_name": "client-name-placeholder",
+  "requested": {
+    "codec": "opus",
+    "sample_rate_hz": 48000,
+    "channels": 1,
+    "chunk_ms": 20,
+    "opus_bitrate_kbps": 48,
+    "jitter_buffer_ms": 100
+  },
+  "token": null
+}
+```
+
+**HandshakeResponse**
+```json
+{
+  "session_id": "session-uuid-placeholder",
+  "accepted": true,
+  "reason": null,
+  "effective": {
+    "codec": "opus",
+    "sample_rate_hz": 48000,
+    "channels": 1,
+    "chunk_ms": 20,
+    "opus_bitrate_kbps": 48,
+    "jitter_buffer_ms": 100
+  },
+  "busy": false
+}
+```
+
+**Heartbeat**
+```json
+{
+  "session_id": "session-uuid-placeholder",
+  "seq": 1,
+  "sent_at_ms": 1700000000000
+}
+```
+
+**StatsSnapshot**
+```json
+{
+  "packets_received": 1234,
+  "packets_lost": 12,
+  "buffer_depth_frames": 960,
+  "buffer_depth_ms": 20,
+  "jitter_buffer_depth_ms": 80.0,
+  "estimated_e2e_latency_ms": 120.5,
+  "audio_rms": 0.05,
+  "audio_peak": 12345
+}
+```
+
 ## 数据面消息（结构）
 
 ### 音频帧头：`AudioFrameHeader`
