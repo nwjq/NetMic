@@ -7,6 +7,7 @@
 - 里程碑回顾：`M1-doc-env-vars-20260128-1` 已 done（新增 docs/ENV.md + docs/WORKFLOW.md 入口）。
 - 里程碑跟进：`M1-003-client-capture-sender` 已 superseded（由 `M1-client-capture-skeleton-20260128-1` 覆盖），若需接入真实采集/重采样再新建任务。
 - 自动驾驶：运行 `scripts/agent_bootstrap.sh`，观察置顶提示并清除阻塞项。
+- 记录(08:05+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(07:54+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(07:49+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-doc-env-vars-20260128-1` 已 done，`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(07:44+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-doc-env-vars-20260128-1` 已 claimed（builder-linux），`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
