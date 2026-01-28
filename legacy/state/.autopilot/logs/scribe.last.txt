@@ -1,0 +1,17 @@
+已完成本轮 scribe 清单，并做了最小文档落盘与提交。
+
+关键结果：
+- `scripts/agent_bootstrap.sh --context`：成功（2026-01-27 20:18+08）。
+- Hub 访问：`/v1/register`、`/v1/tasks`、`/v1/events` 均失败（exit=7，无法连接 `127.0.0.1:7788`）。
+- 离线任务快照（`agent_hub.db`）：任务均为 `queued`，包含 `BOOT-001/002`、`M0-001`、`M1-001/002/003`、`M2-001`、`M3-001`。
+
+我做的变更：
+- 追加了 4 条精简记录到 `docs/SESSION_LOG.md:33`（DONE/BLOCKER/NEXT/TEST，20:18+08）。
+- 未改 `docs/DECISIONS.md` / `docs/TODO.md`（无新增稳定决策，且这两处已有未提交改动）。
+
+提交信息：
+- 提交已创建：`65ea776`
+- message：`task(BOOT-002-session-docs-init): 记录 Hub 不可达与上下文复跑`
+
+自然下一步（等端口环境可用时）：
+- 在真实 Runner 上启动 Hub 后，补跑 register/tasks/events，再由我对齐 SESSION_LOG/TODO。
