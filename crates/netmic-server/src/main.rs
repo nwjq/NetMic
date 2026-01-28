@@ -462,6 +462,9 @@ impl ReceiverMetrics {
         }
         let (audio_rms, audio_peak) = self.take_audio_level_snapshot();
         let buffer_depth_ms = self.buffer_depth_ms();
+        // 占位：抖动缓冲与端到端延迟的真实计算后续补齐。
+        let jitter_buffer_depth_ms = 0.0_f32;
+        let estimated_e2e_latency_ms = 0.0_f32;
         let idle_ms = last_packet_at
             .map(|ts| now.duration_since(ts).as_millis() as u64)
             .unwrap_or(0);
@@ -479,6 +482,8 @@ impl ReceiverMetrics {
             buffer_depth_frames = self.buffer_depth_frames,
             buffer_depth_ms,
             buffer_target_ms = self.buffer_target_ms,
+            jitter_buffer_depth_ms,
+            estimated_e2e_latency_ms,
             audio_rms,
             audio_peak,
             reconnect_window_secs = RECONNECT_WINDOW_SECS,
