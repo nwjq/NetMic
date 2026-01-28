@@ -3,10 +3,11 @@
 当前优先级（与 Hub 任务队列配合）：
 - 用户前置：配置 `.autopilot/runner.env`（至少补全 `BUILDER_MAC_SSH` 或在 mac 端也运行监督器）。
 - 编排优先：Hub 已可达（`http://192.168.11.1:7788`），orchestrator 应开始 claim/编排并推动任务状态从 queued 前进。
-- 里程碑执行：`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），需要 mac 上线或改派替代任务。
+- 里程碑执行：`M1-server-bind-addr-20260128-1` queued（builder-linux），可直接认领推进；`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），需要 mac 上线或改派替代任务。
 - 里程碑回顾：`M1-doc-env-vars-20260128-1` 已 done（新增 docs/ENV.md + docs/WORKFLOW.md 入口）。
 - 里程碑跟进：`M1-003-client-capture-sender` 已 superseded（由 `M1-client-capture-skeleton-20260128-1` 覆盖），若需接入真实采集/重采样再新建任务。
 - 自动驾驶：运行 `scripts/agent_bootstrap.sh`，观察置顶提示并清除阻塞项。
+- 记录(08:12+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 新增 `M1-server-bind-addr-20260128-1` queued（builder-linux）；`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(08:05+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(07:54+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
 - 记录(07:49+08)：门禁仍为 M0–M3 全 pass（active=M3）；Hub 显示 `M1-doc-env-vars-20260128-1` 已 done，`M1-client-cpal-capture-20260128-1` 仍 queued（builder-mac 未在线），其余任务 done/superseded。
