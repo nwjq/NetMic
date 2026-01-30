@@ -265,24 +265,18 @@ mod tests {
         assert_eq!(result.effective.sample_rate_hz, DEFAULT_SAMPLE_RATE_HZ);
         assert_eq!(result.effective.chunk_ms, DEFAULT_CHUNK_MS);
         assert_eq!(result.effective.channels, INTERNAL_CHANNELS);
-        assert!(
-            result
-                .fallbacks
-                .iter()
-                .any(|event| event.field == "sample_rate_hz")
-        );
-        assert!(
-            result
-                .fallbacks
-                .iter()
-                .any(|event| event.field == "chunk_ms")
-        );
-        assert!(
-            result
-                .fallbacks
-                .iter()
-                .any(|event| event.field == "channels")
-        );
+        assert!(result
+            .fallbacks
+            .iter()
+            .any(|event| event.field == "sample_rate_hz"));
+        assert!(result
+            .fallbacks
+            .iter()
+            .any(|event| event.field == "chunk_ms"));
+        assert!(result
+            .fallbacks
+            .iter()
+            .any(|event| event.field == "channels"));
     }
 
     #[test]
@@ -300,12 +294,10 @@ mod tests {
         assert!(result.had_fallbacks());
         assert_eq!(result.effective.codec, "pcm16");
         assert_eq!(result.effective.opus_bitrate_kbps, None);
-        assert!(
-            result
-                .fallbacks
-                .iter()
-                .any(|event| event.field == "opus_bitrate_kbps")
-        );
+        assert!(result
+            .fallbacks
+            .iter()
+            .any(|event| event.field == "opus_bitrate_kbps"));
     }
 
     #[test]

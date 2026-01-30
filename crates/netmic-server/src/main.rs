@@ -277,7 +277,10 @@ impl ReceiverContext {
         if idle_for >= Duration::from_secs(RECONNECT_GRACE_SECS)
             && self.state == ConnectionState::Active
         {
-            self.transition_to(ConnectionState::Reconnecting, "no packets, enter reconnecting");
+            self.transition_to(
+                ConnectionState::Reconnecting,
+                "no packets, enter reconnecting",
+            );
         }
 
         if idle_for >= Duration::from_secs(RECONNECT_WINDOW_SECS)
@@ -285,7 +288,10 @@ impl ReceiverContext {
         {
             let released = self.active_client.take();
             self.last_packet_at = None;
-            self.transition_to(ConnectionState::Idle, "reconnect window exceeded, release client");
+            self.transition_to(
+                ConnectionState::Idle,
+                "reconnect window exceeded, release client",
+            );
             if let Some(addr) = released {
                 info!(%addr, "active client released after reconnect timeout");
             }
@@ -293,12 +299,8 @@ impl ReceiverContext {
     }
 
     fn maybe_report(&mut self, now: Instant) {
-        self.metrics.report_if_due(
-            now,
-            self.state,
-            self.active_client,
-            self.last_packet_at,
-        );
+        self.metrics
+            .report_if_due(now, self.state, self.active_client, self.last_packet_at);
     }
 
     fn transition_to(&mut self, next: ConnectionState, reason: &str) {
@@ -353,9 +355,7 @@ impl AudioSink for FileDumpSink {
         self.file
             .write_all(payload)
             .with_context(|| format!("failed to append audio dump: {}", self.path.display()))?;
-        self.total_bytes = self
-            .total_bytes
-            .saturating_add(payload.len() as u64);
+        self.total_bytes = self.total_bytes.saturating_add(payload.len() as u64);
         info!(
             bytes = payload.len(),
             total_bytes = self.total_bytes,
@@ -508,16 +508,16 @@ impl ReceiverMetrics {
             if abs_sample > self.audio_level_peak {
                 self.audio_level_peak = abs_sample;
             }
-            self.audio_level_sum_squares =
-                self.audio_level_sum_squares.saturating_add((sample as i64 * sample as i64) as u64);
+            self.audio_level_sum_squares = self
+                .audio_level_sum_squares
+                .saturating_add((sample as i64 * sample as i64) as u64);
             self.audio_level_samples = self.audio_level_samples.saturating_add(1);
         }
     }
 
     fn take_audio_level_snapshot(&mut self) -> (f32, u32) {
         let rms = if self.audio_level_samples > 0 {
-            let mean_square =
-                self.audio_level_sum_squares as f64 / self.audio_level_samples as f64;
+            let mean_square = self.audio_level_sum_squares as f64 / self.audio_level_samples as f64;
             mean_square.sqrt() as f32
         } else {
             0.0

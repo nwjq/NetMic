@@ -81,7 +81,8 @@ fn send_demo_packets(params: &SessionParams) -> Result<(), String> {
     let socket =
         UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
     let mut ctx = ClientContext::new();
-    let mut pipeline = AudioPipeline::new(params);
+    let mut pipeline =
+        AudioPipeline::new(params).map_err(|err| format!("init audio pipeline failed: {err}"))?;
 
     ctx.transition_to(ClientConnectionState::Connecting, "start demo send");
 
@@ -296,8 +297,8 @@ impl ClientMetrics {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_audio_datagram, build_control_datagram,
-        DATAGRAM_KIND_AUDIO_PCM16, DATAGRAM_KIND_CONTROL_JSON,
+        build_audio_datagram, build_control_datagram, DATAGRAM_KIND_AUDIO_PCM16,
+        DATAGRAM_KIND_CONTROL_JSON,
     };
     use crate::audio::Pcm16Frame;
     use netmic_proto::datagram::{split_datagram, DatagramKind};
