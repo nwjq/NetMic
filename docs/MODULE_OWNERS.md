@@ -34,6 +34,7 @@
 | client/capture | 麦克风采集 | macOS | 采集模块 + 设备选择 |
 | client/resample | 重采样/单声道化 | macOS | 处理链路 |
 | client/sender | UDP 发送与心跳 | macOS | 发送模块 |
+| gui | Tauri UI + IPC | 共享 | UI 与 IPC 文档 |
 | proto | 协议结构与握手 | 共享 | 消息定义文档 |
 | config | 参数校验与回退规则 | 共享 | 参数规则文档 |
 | logging | 日志与错误分类 | 共享 | 日志规范 |
@@ -61,4 +62,3 @@
 - **M0**：Linux 侧为主（虚拟麦克风/写入验证）  
 - **M1**：Client + Server 并行（采集/发送/接收/注入）  
 - **M2/M3**：共享模块为主（参数回退、稳定性、指标）
-

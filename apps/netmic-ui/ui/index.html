@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NetMic MVP 控制台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient"></div>
+    <div id="app" class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">NM</div>
+          <div class="brand-text">
+            <div class="brand-name">NetMic</div>
+            <div class="brand-sub">MVP 控制台</div>
+          </div>
+        </div>
+        <div class="mode-switch" role="tablist" aria-label="模式切换">
+          <button class="mode-btn" data-mode="client" role="tab" aria-selected="false">Client</button>
+          <button class="mode-btn" data-mode="server" role="tab" aria-selected="false">Server</button>
+        </div>
+        <div class="status-pill" id="status-pill">
+          <span class="status-dot"></span>
+          <div>
+            <div class="status-label" id="status-label">未连接</div>
+            <div class="status-note" id="status-note">准备就绪</div>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="reset-defaults">恢复默认</button>
+          <button class="primary" id="primary-action">开始</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <aside class="nav">
+          <button class="nav-btn" data-tab="config">配置</button>
+          <button class="nav-btn" data-tab="status">状态</button>
+          <button class="nav-btn" data-tab="logs">日志</button>
+        </aside>
+
+        <main class="views">
+          <section class="view" id="view-config">
+            <div class="grid two">
+              <div class="card" id="config-connection"></div>
+              <div class="card" id="config-audio"></div>
+            </div>
+            <div class="grid two">
+              <div class="card" id="config-client"></div>
+              <div class="card" id="config-server"></div>
+            </div>
+            <div class="card" id="config-fallbacks"></div>
+          </section>
+
+          <section class="view" id="view-status">
+            <div class="grid three">
+              <div class="card" id="status-connection"></div>
+              <div class="card" id="status-metrics"></div>
+              <div class="card" id="status-audio"></div>
+            </div>
+            <div class="grid two">
+              <div class="card" id="status-params"></div>
+              <div class="card" id="status-events"></div>
+            </div>
+          </section>
+
+          <section class="view" id="view-logs">
+            <div class="card log-card">
+              <div class="log-controls">
+                <div class="log-filter">
+                  <label>级别过滤</label>
+                  <select id="log-filter">
+                    <option value="all">全部</option>
+                    <option value="info">INFO</option>
+                    <option value="warn">WARN</option>
+                    <option value="error">ERROR</option>
+                  </select>
+                </div>
+                <div class="log-actions">
+                  <button class="ghost" id="log-clear">清空</button>
+                  <button class="ghost" id="log-export">导出</button>
+                </div>
+              </div>
+              <div class="log-list" id="log-list"></div>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

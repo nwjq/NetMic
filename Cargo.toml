@@ -3,6 +3,7 @@ members = [
   "crates/netmic-proto",
   "crates/netmic-server",
   "crates/netmic-client",
+  "apps/netmic-ui/src-tauri",
 ]
 resolver = "2"
 
