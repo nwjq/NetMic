@@ -80,16 +80,21 @@ require_cmd() {
   fi
 }
 
+pactl_info() {
+  # 强制英文输出，避免本地化字段导致 awk 解析失败。
+  LC_ALL=C pactl info 2>/dev/null
+}
+
 detect_server_name() {
-  pactl info 2>/dev/null | awk -F': ' '/^Server Name:/ {print $2; exit}'
+  pactl_info | awk -F': ' '/^Server Name:/ {print $2; exit}'
 }
 
 detect_default_sink() {
-  pactl info 2>/dev/null | awk -F': ' '/^Default Sink:/ {print $2; exit}'
+  pactl_info | awk -F': ' '/^Default Sink:/ {print $2; exit}'
 }
 
 detect_default_source() {
-  pactl info 2>/dev/null | awk -F': ' '/^Default Source:/ {print $2; exit}'
+  pactl_info | awk -F': ' '/^Default Source:/ {print $2; exit}'
 }
 
 server_kind_from_name() {
