@@ -317,7 +317,11 @@ mod tests {
 
     #[test]
     fn audio_datagram_prefixes_kind_and_preserves_payload() {
-        let frame = Pcm16Frame::new(vec![0_i16, 1024_i16], 48_000, 1);
+        let frame = Pcm16Frame {
+            samples: vec![0_i16, 1024_i16],
+            sample_rate_hz: 48_000,
+            channels: 1,
+        };
         let payload = frame.to_bytes();
         let datagram = build_audio_datagram(&frame);
         assert_eq!(datagram.first().copied(), Some(DATAGRAM_KIND_AUDIO_PCM16));

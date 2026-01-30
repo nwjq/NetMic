@@ -10,9 +10,7 @@
 ## 优先阅读（按顺序）
 - `MVP.md`：产品范围、核心约束与参数安全范围。
 - `docs/ROADMAP.md`：里程碑顺序与验收规则。
-- `docs/WORKFLOW.md`：协作模型与合并边界。
 - `docs/MODULE_OWNERS.md`：模块责任边界与冲突处理规则。
-- `docs/CONTINUOUS_AUTOPILOT.md`：多 Agent 与 Runner 的工作流。
 
 ## 本地 Skills（按需触发）
 - `netmic-architecture`：系统边界、协议/数据流、跨模块重构；接口变更要同步更新文档。
@@ -21,16 +19,16 @@
 - `rust-engineer`：Rust 实现模式与错误处理。
 
 ## 仓库结构速览
-- `agent-hub/`：局域网协作协调服务（极简 HTTP JSON）。
-- `scripts/`：Hub、角色启动与 autopilot 自动化脚本。
-- `docs/`：协作方式、里程碑、角色与流程规范。
+- `crates/`：核心代码（client/server/proto）。
+- `scripts/`：开发自检/验证脚本（以 `scripts/linux` 为主）。
+- `docs/`：规范与里程碑文档。
 
 ## 常用命令
-- 启动 Hub：`python3 agent-hub/agent_hub.py`
-- 加载上下文：`scripts/agent_bootstrap.sh`
-- 启动角色会话：`HUB=http://<ip>:7788 ROLE=orchestrator scripts/start_agent.sh`
-- Autopilot：`scripts/autopilot.sh start|status|stop`
-- Hub 健康检查：`python3 scripts/e2e_smoke.py --mode health --hub http://<ip>:7788`
+- Linux 环境自检：`scripts/linux/audio_selfcheck.sh --json`
+- 虚拟麦克风管理：`scripts/linux/virtual_mic.sh create|remove|status`
+- 虚拟麦 smoke 验证：`scripts/linux/virtual_mic_smoke.sh --duration 300`
+  
+> 说明：`scripts/linux` 仅用于开发验证，不作为运行时依赖。
 
 ## 工作约定
 - 若修改协议/配置/IPC 契约，需在同一次变更中更新相关文档。

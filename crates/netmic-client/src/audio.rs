@@ -36,14 +36,6 @@ pub struct Pcm16Frame {
 }
 
 impl Pcm16Frame {
-    pub fn new(samples: Vec<i16>, sample_rate_hz: u32, channels: u16) -> Self {
-        Self {
-            samples,
-            sample_rate_hz,
-            channels,
-        }
-    }
-
     /// 从 f32 单声道样本构造 PCM16 帧。
     pub fn from_f32_mono(samples: Vec<f32>, sample_rate_hz: u32) -> Self {
         let pcm = samples.into_iter().map(f32_to_i16).collect();
@@ -98,7 +90,6 @@ pub struct AudioPipeline {
     capture: CpalCapture,
     resampler: MonoResampler,
     target_sample_rate_hz: u32,
-    target_channels: u16,
     chunk_ms: u32,
 }
 
@@ -115,7 +106,6 @@ impl AudioPipeline {
             capture,
             resampler,
             target_sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
-            target_channels: TARGET_CHANNELS,
             chunk_ms: params.chunk_ms,
         })
     }
@@ -142,7 +132,6 @@ struct CpalCapture {
     _stream: Stream,
     buffer: Arc<Mutex<SampleBuffer>>,
     input_sample_rate_hz: u32,
-    input_channels: u16,
 }
 
 impl CpalCapture {
@@ -201,7 +190,6 @@ impl CpalCapture {
             _stream: stream,
             buffer,
             input_sample_rate_hz: sample_rate_hz,
-            input_channels: channels,
         })
     }
 
@@ -236,7 +224,8 @@ fn build_stream<T>(
     err_fn: impl Fn(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream, CaptureError>
 where
-    T: Sample,
+    T: Sample + cpal::SizedSample,
+    f32: cpal::FromSample<T>,
 {
     device
         .build_input_stream(
@@ -254,7 +243,9 @@ fn push_interleaved_to_mono<T: Sample>(
     data: &[T],
     channels: u16,
     buffer: &Arc<Mutex<SampleBuffer>>,
-) {
+) where
+    f32: cpal::FromSample<T>,
+{
     let ch = channels.max(1) as usize;
     let mut mono = Vec::with_capacity(data.len() / ch);
     if ch == 1 {
@@ -284,7 +275,7 @@ struct MonoResampler {
 
 enum ResampleMode {
     Passthrough,
-    Rubato(FftFixedInOut<f32>),
+    Rubato(Box<FftFixedInOut<f32>>),
 }
 
 impl MonoResampler {
@@ -307,7 +298,7 @@ impl MonoResampler {
         .map_err(|err| CaptureError::ResampleFailed(err.to_string()))?;
 
         Ok(Self {
-            inner: ResampleMode::Rubato(resampler),
+            inner: ResampleMode::Rubato(Box::new(resampler)),
             target_frames,
         })
     }
@@ -351,7 +342,6 @@ impl MonoResampler {
 struct SampleBuffer {
     samples: VecDeque<f32>,
     capacity: usize,
-    dropped_samples: u64,
 }
 
 impl SampleBuffer {
@@ -359,7 +349,6 @@ impl SampleBuffer {
         Self {
             samples: VecDeque::with_capacity(capacity),
             capacity,
-            dropped_samples: 0,
         }
     }
 
@@ -376,9 +365,7 @@ impl SampleBuffer {
         if total > self.capacity {
             let overflow = total - self.capacity;
             for _ in 0..overflow {
-                if self.samples.pop_front().is_some() {
-                    self.dropped_samples = self.dropped_samples.saturating_add(1);
-                }
+                let _ = self.samples.pop_front();
             }
         }
         for sample in input {
