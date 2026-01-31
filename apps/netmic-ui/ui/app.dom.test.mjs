@@ -131,6 +131,7 @@ test("renderStatus writes key status fields and events", () => {
     mode: "client",
     status: "streaming",
     status_note: "推流中",
+    server_config: { listen_port: 43000 },
     runtime: {
       connected_seconds: 65,
       peer_addr: "127.0.0.1:43000",
@@ -181,19 +182,22 @@ test("renderConfig switches between client/server forms", () => {
   const elements = createConfigElements();
   const state = {
     mode: "client",
-    config: {
+    client_config: {
       server_addr: "10.0.0.9",
       server_port: 43000,
-      listen_port: 43000,
       input_device: "系统默认",
       codec: "opus",
       sample_rate_hz: 48000,
+      channels: 1,
       chunk_ms: 20,
       opus_bitrate_kbps: 48,
       jitter_buffer_ms: 100,
       auto_reconnect: true,
-      force_takeover: false,
       pairing_token: "",
+    },
+    server_config: {
+      listen_port: 43000,
+      force_takeover: false,
       virtual_mic_enabled: false,
     },
     devices: { input: ["系统默认", "USB Mic"] },

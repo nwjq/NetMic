@@ -67,8 +67,18 @@ const createTauriStub = () => {
         snapshot = { ...snapshot, status: "idle", status_note: "已停止" };
         return { ...snapshot };
       }
-      case "set_config": {
-        snapshot = { ...snapshot, config: { ...snapshot.config, ...args.config } };
+      case "set_client_config": {
+        snapshot = {
+          ...snapshot,
+          client_config: { ...snapshot.client_config, ...args.config },
+        };
+        return { ...snapshot };
+      }
+      case "set_server_config": {
+        snapshot = {
+          ...snapshot,
+          server_config: { ...snapshot.server_config, ...args.config },
+        };
         return { ...snapshot };
       }
       case "reset_defaults": {

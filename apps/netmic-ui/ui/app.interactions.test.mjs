@@ -32,7 +32,7 @@ test("bindActions triggers mode change when idle", async () => {
     logClear: createButton(),
     logExport: createButton(),
   };
-  const state = { mode: "client", status: "idle" };
+  let state = { mode: "client", status: "idle" };
   let setModeCalled = null;
   let setStateValue = null;
   const adapter = {
@@ -57,9 +57,10 @@ test("bindActions triggers mode change when idle", async () => {
 
   bindActions({
     elements,
-    state,
+    getState: () => state,
     setState: (snapshot) => {
       setStateValue = snapshot;
+      state = { ...state, ...snapshot };
     },
     adapter,
     setActiveTab: () => {},
@@ -106,7 +107,7 @@ test("bindActions blocks mode change when busy", async () => {
 
   bindActions({
     elements,
-    state,
+    getState: () => state,
     setState: () => {},
     adapter,
     setActiveTab: () => {},
@@ -128,7 +129,7 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     logClear: createButton(),
     logExport: createButton(),
   };
-  const state = { mode: "client", status: "idle" };
+  let state = { mode: "client", status: "idle" };
   let lastSnapshot = null;
   const adapter = {
     async start() {
@@ -152,9 +153,10 @@ test("bindActions toggles start/stop via primaryAction", async () => {
   let busy = false;
   bindActions({
     elements,
-    state,
+    getState: () => state,
     setState: (snapshot) => {
       lastSnapshot = snapshot;
+      state = { ...state, ...snapshot };
     },
     adapter,
     setActiveTab: () => {},
@@ -180,11 +182,19 @@ test("bindConfigInputs converts number and checkbox values", async () => {
   };
 
   let receivedConfig = null;
-  const state = { config: { server_port: 43000, auto_reconnect: true } };
+  const state = {
+    mode: "client",
+    client_config: { server_port: 43000, auto_reconnect: true },
+    server_config: { listen_port: 43000, force_takeover: false, virtual_mic_enabled: false },
+  };
   const adapter = {
-    async setConfig(config) {
+    async setClientConfig(config) {
       receivedConfig = config;
-      return { config };
+      return { client_config: config };
+    },
+    async setServerConfig(config) {
+      receivedConfig = config;
+      return { server_config: config };
     },
     async forceDisconnect() {
       return {};
@@ -193,7 +203,7 @@ test("bindConfigInputs converts number and checkbox values", async () => {
 
   bindConfigInputs({
     root,
-    state,
+    getState: () => state,
     setState: () => {},
     adapter,
   });
@@ -214,7 +224,10 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
   };
   let forced = false;
   const adapter = {
-    async setConfig() {
+    async setClientConfig() {
+      return {};
+    },
+    async setServerConfig() {
       return {};
     },
     async forceDisconnect() {
@@ -226,7 +239,11 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
 
   bindConfigInputs({
     root,
-    state: { config: {} },
+    getState: () => ({
+      mode: "server",
+      client_config: {},
+      server_config: { listen_port: 43000 },
+    }),
     setState: (snapshot) => {
       lastSnapshot = snapshot;
     },

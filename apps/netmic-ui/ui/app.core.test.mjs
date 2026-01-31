@@ -6,9 +6,9 @@ test("default snapshot uses MVP defaults", () => {
   const snapshot = defaultSnapshot();
   assert.equal(snapshot.mode, "client");
   assert.equal(snapshot.status, "idle");
-  assert.equal(snapshot.config.sample_rate_hz, 48000);
-  assert.equal(snapshot.config.chunk_ms, 20);
-  assert.equal(snapshot.config.opus_bitrate_kbps, 48);
+  assert.equal(snapshot.client_config.sample_rate_hz, 48000);
+  assert.equal(snapshot.client_config.chunk_ms, 20);
+  assert.equal(snapshot.client_config.opus_bitrate_kbps, 48);
   assert.equal(snapshot.effective.codec, "opus");
   assert.ok(Array.isArray(snapshot.logs));
   assert.ok(snapshot.logs.length > 0);
@@ -31,9 +31,9 @@ test("mock adapter start/stop reflects mode", async () => {
   await adapter.stop();
 });
 
-test("mock adapter setConfig updates effective params", async () => {
+test("mock adapter setClientConfig updates effective params", async () => {
   const adapter = createMockAdapter();
-  let snapshot = await adapter.setConfig({
+  let snapshot = await adapter.setClientConfig({
     codec: "pcm16",
     opus_bitrate_kbps: 96,
     sample_rate_hz: 44100,
@@ -52,8 +52,8 @@ test("mock adapter emits snapshot on config change", async () => {
   adapter.onSnapshot((snapshot) => {
     received = snapshot;
   });
-  await adapter.setConfig({ server_addr: "10.0.0.8" });
+  await adapter.setClientConfig({ server_addr: "10.0.0.8" });
   assert.ok(received);
-  assert.equal(received.config.server_addr, "10.0.0.8");
+  assert.equal(received.client_config.server_addr, "10.0.0.8");
   await adapter.stop();
 });

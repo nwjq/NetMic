@@ -78,8 +78,11 @@ const createTauriAdapter = (tauriApi) => {
     async setMode(mode) {
       return invoke("set_mode", { mode });
     },
-    async setConfig(config) {
-      return invoke("set_config", { config });
+    async setClientConfig(config) {
+      return invoke("set_client_config", { config });
+    },
+    async setServerConfig(config) {
+      return invoke("set_server_config", { config });
     },
     async resetDefaults() {
       return invoke("reset_defaults");
@@ -119,6 +122,8 @@ const createTauriAdapter = (tauriApi) => {
 const tauriApi = resolveTauriApi();
 const hasTauri = Boolean(tauriApi);
 let adapter = hasTauri ? createTauriAdapter(tauriApi) : createMockAdapter();
+
+const getState = () => state;
 
 const setState = (snapshot) => {
   state = snapshot;
@@ -203,7 +208,7 @@ const render = () => {
   });
   bindConfigInputs({
     root: document,
-    state,
+    getState,
     setState,
     adapter,
   });
@@ -214,7 +219,7 @@ const render = () => {
 const init = async () => {
   bindActions({
     elements,
-    state,
+    getState,
     setState,
     adapter,
     setActiveTab,

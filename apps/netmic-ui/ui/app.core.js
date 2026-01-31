@@ -7,10 +7,9 @@ export const defaultSnapshot = () => ({
   mode: "client",
   status: "idle",
   status_note: "准备就绪",
-  config: {
+  client_config: {
     server_addr: "127.0.0.1",
     server_port: 43000,
-    listen_port: 43000,
     input_device: "系统默认",
     codec: "opus",
     sample_rate_hz: 48000,
@@ -19,8 +18,11 @@ export const defaultSnapshot = () => ({
     opus_bitrate_kbps: 48,
     jitter_buffer_ms: 100,
     auto_reconnect: true,
-    force_takeover: false,
     pairing_token: "",
+  },
+  server_config: {
+    listen_port: 43000,
+    force_takeover: false,
     virtual_mic_enabled: false,
   },
   effective: {
@@ -48,6 +50,8 @@ export const defaultSnapshot = () => ({
     reconnect_attempts: 0,
     mic_permission: "未知",
     virtual_mic_name: "NetMic Virtual Mic",
+    virtual_mic_ready: false,
+    virtual_mic_error: null,
     last_error: null,
   },
   devices: {
@@ -105,9 +109,9 @@ export const createMockAdapter = () => {
     mockState.metrics.audio_rms = Math.abs(Math.sin(t * 1.2)) * 0.7;
     mockState.metrics.audio_peak = Math.floor(6000 + Math.abs(Math.sin(t * 1.4)) * 12000);
     mockState.metrics.uplink_kbps =
-      mockState.config.codec === "opus"
-        ? mockState.config.opus_bitrate_kbps || 48
-        : (mockState.config.sample_rate_hz * 16) / 1000;
+      mockState.client_config.codec === "opus"
+        ? mockState.client_config.opus_bitrate_kbps || 48
+        : (mockState.client_config.sample_rate_hz * 16) / 1000;
   };
 
   const updateWaveform = () => {
@@ -147,18 +151,24 @@ export const createMockAdapter = () => {
     }
   };
 
-  const applyConfig = (config) => {
-    mockState.config = { ...mockState.config, ...config };
+  const applyClientConfig = (config) => {
+    mockState.client_config = { ...mockState.client_config, ...config };
     mockState.effective = {
-      codec: mockState.config.codec,
-      sample_rate_hz: mockState.config.sample_rate_hz,
+      codec: mockState.client_config.codec,
+      sample_rate_hz: mockState.client_config.sample_rate_hz,
       channels: 1,
-      chunk_ms: mockState.config.chunk_ms,
+      chunk_ms: mockState.client_config.chunk_ms,
       opus_bitrate_kbps:
-        mockState.config.codec === "opus" ? mockState.config.opus_bitrate_kbps : null,
-      jitter_buffer_ms: mockState.config.jitter_buffer_ms,
+        mockState.client_config.codec === "opus"
+          ? mockState.client_config.opus_bitrate_kbps
+          : null,
+      jitter_buffer_ms: mockState.client_config.jitter_buffer_ms,
     };
     mockState.fallbacks = [];
+  };
+
+  const applyServerConfig = (config) => {
+    mockState.server_config = { ...mockState.server_config, ...config };
   };
 
   return {
@@ -172,13 +182,20 @@ export const createMockAdapter = () => {
       mockState.runtime.peer_addr = null;
       mockState.runtime.connected_seconds = 0;
       mockState.runtime.last_error = null;
+      mockState.runtime.mic_permission = mode === "server" ? "不适用" : "未知";
       pushLog("info", `切换到 ${mode === "client" ? "Client" : "Server"} 模式`);
       emit();
       return deepClone(mockState);
     },
-    async setConfig(config) {
-      applyConfig(config);
-      pushLog("info", "已更新配置（模拟）");
+    async setClientConfig(config) {
+      applyClientConfig(config);
+      pushLog("info", "已更新客户端配置（模拟）");
+      emit();
+      return deepClone(mockState);
+    },
+    async setServerConfig(config) {
+      applyServerConfig(config);
+      pushLog("info", "已更新服务端配置（模拟）");
       emit();
       return deepClone(mockState);
     },
@@ -192,13 +209,15 @@ export const createMockAdapter = () => {
       if (mockState.mode === "client") {
         mockState.status = "streaming";
         mockState.status_note = "模拟推流中";
-        mockState.runtime.peer_addr = `${mockState.config.server_addr}:${mockState.config.server_port}`;
+        mockState.runtime.peer_addr = `${mockState.client_config.server_addr}:${mockState.client_config.server_port}`;
         mockState.runtime.last_error = null;
       } else {
         mockState.status = "listening";
         mockState.status_note = "等待客户端连接";
         mockState.runtime.peer_addr = null;
         mockState.runtime.last_error = null;
+        mockState.runtime.virtual_mic_ready = true;
+        mockState.runtime.virtual_mic_error = null;
       }
       pushLog("info", "开始运行（模拟）");
       startTicker();

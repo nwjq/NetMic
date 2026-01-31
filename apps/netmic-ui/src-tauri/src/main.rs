@@ -5,23 +5,30 @@ use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+    CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
+    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
 };
 use netmic_proto::datagram::{split_datagram, wrap_control_json, DatagramKind};
-use netmic_proto::protocol::{HandshakeRequest, HandshakeResponse, SessionParams};
+use netmic_proto::protocol::{
+    HandshakeRequest, HandshakeResponse, ServerCommandRequest, ServerCommandResponse,
+    ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
+};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::net::UdpSocket;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
 const EVENT_SNAPSHOT: &str = "netmic://snapshot";
 const EVENT_WAVEFORM: &str = "netmic://waveform";
+const SERVER_STATUS_POLL_MS: u64 = 1_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct UiConfig {
+struct UiClientConfig {
     server_addr: String,
     server_port: u16,
-    listen_port: u16,
     input_device: String,
     codec: String,
     sample_rate_hz: u32,
@@ -30,8 +37,13 @@ struct UiConfig {
     opus_bitrate_kbps: u32,
     jitter_buffer_ms: u32,
     auto_reconnect: bool,
-    force_takeover: bool,
     pairing_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UiServerConfig {
+    listen_port: u16,
+    force_takeover: bool,
     virtual_mic_enabled: bool,
 }
 
@@ -54,6 +66,8 @@ struct UiRuntime {
     reconnect_attempts: u32,
     mic_permission: String,
     virtual_mic_name: String,
+    virtual_mic_ready: bool,
+    virtual_mic_error: Option<String>,
     last_error: Option<String>,
 }
 
@@ -88,7 +102,8 @@ struct UiSnapshot {
     mode: String,
     status: String,
     status_note: String,
-    config: UiConfig,
+    client_config: UiClientConfig,
+    server_config: UiServerConfig,
     effective: SessionParams,
     fallbacks: Vec<UiFallbackEvent>,
     metrics: UiMetrics,
@@ -97,11 +112,20 @@ struct UiSnapshot {
     logs: Vec<UiLogEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedState {
+    mode: String,
+    client_config: UiClientConfig,
+    server_config: UiServerConfig,
+}
+
 struct AppState {
     snapshot: UiSnapshot,
+    persist_path: PathBuf,
     streaming: bool,
     metrics_loop: bool,
     capture_loop: bool,
+    server_monitor_loop: bool,
     connected_since: Option<Instant>,
     latest_audio_rms: f32,
     latest_audio_peak: u32,
@@ -109,29 +133,63 @@ struct AppState {
 
 type SharedState = Arc<Mutex<AppState>>;
 
+fn default_client_config(default_params: &SessionParams) -> UiClientConfig {
+    UiClientConfig {
+        server_addr: "127.0.0.1".to_string(),
+        server_port: 43000,
+        input_device: "系统默认".to_string(),
+        codec: default_params.codec.clone(),
+        sample_rate_hz: default_params.sample_rate_hz,
+        channels: default_params.channels,
+        chunk_ms: default_params.chunk_ms,
+        opus_bitrate_kbps: default_params.opus_bitrate_kbps.unwrap_or(48),
+        jitter_buffer_ms: default_params.jitter_buffer_ms,
+        auto_reconnect: true,
+        pairing_token: "".to_string(),
+    }
+}
+
+fn default_server_config() -> UiServerConfig {
+    UiServerConfig {
+        listen_port: 43000,
+        force_takeover: false,
+        virtual_mic_enabled: false,
+    }
+}
+
 impl Default for AppState {
     fn default() -> Self {
+        AppState::new_with_path(PathBuf::from("netmic-ui.json"), None)
+    }
+}
+
+impl AppState {
+    fn new_with_path(persist_path: PathBuf, persisted: Option<PersistedState>) -> Self {
         let default_params = SessionParams::mvp_default();
+        let (client_config, server_config, mode) = if let Some(persisted) = persisted {
+            (
+                persisted.client_config,
+                persisted.server_config,
+                if persisted.mode == "server" {
+                    "server".to_string()
+                } else {
+                    "client".to_string()
+                },
+            )
+        } else {
+            (
+                default_client_config(&default_params),
+                default_server_config(),
+                "client".to_string(),
+            )
+        };
+
         let snapshot = UiSnapshot {
-            mode: "client".to_string(),
+            mode,
             status: "idle".to_string(),
             status_note: "准备就绪".to_string(),
-            config: UiConfig {
-                server_addr: "127.0.0.1".to_string(),
-                server_port: 43000,
-                listen_port: 43000,
-                input_device: "系统默认".to_string(),
-                codec: default_params.codec.clone(),
-                sample_rate_hz: default_params.sample_rate_hz,
-                channels: default_params.channels,
-                chunk_ms: default_params.chunk_ms,
-                opus_bitrate_kbps: default_params.opus_bitrate_kbps.unwrap_or(48),
-                jitter_buffer_ms: default_params.jitter_buffer_ms,
-                auto_reconnect: true,
-                force_takeover: false,
-                pairing_token: "".to_string(),
-                virtual_mic_enabled: false,
-            },
+            client_config,
+            server_config,
             effective: default_params,
             fallbacks: Vec::new(),
             metrics: UiMetrics {
@@ -150,6 +208,8 @@ impl Default for AppState {
                 reconnect_attempts: 0,
                 mic_permission: "未知".to_string(),
                 virtual_mic_name: "NetMic Virtual Mic".to_string(),
+                virtual_mic_ready: false,
+                virtual_mic_error: None,
                 last_error: None,
             },
             devices: UiDevices {
@@ -158,18 +218,46 @@ impl Default for AppState {
             logs: vec![UiLogEntry {
                 ts_ms: now_ms(),
                 level: "info".to_string(),
-                message: "UI 已就绪（模拟状态）".to_string(),
+                message: "UI 已就绪".to_string(),
             }],
         };
+        let mut snapshot = snapshot;
+        if snapshot.mode == "server" {
+            snapshot.runtime.mic_permission = "不适用".to_string();
+        }
 
         Self {
             snapshot,
+            persist_path,
             streaming: false,
             metrics_loop: false,
             capture_loop: false,
+            server_monitor_loop: false,
             connected_since: None,
             latest_audio_rms: 0.0,
             latest_audio_peak: 0,
+        }
+    }
+
+    fn load_or_default(app: &AppHandle) -> Self {
+        let persist_path = app
+            .path()
+            .resolve("netmic-ui.json", BaseDirectory::AppConfig)
+            .unwrap_or_else(|_| PathBuf::from("netmic-ui.json"));
+        let persisted = read_persisted_state(&persist_path);
+        let mut state = AppState::new_with_path(persist_path, persisted);
+        state.update_effective();
+        state
+    }
+
+    fn persist(&mut self) {
+        let payload = PersistedState {
+            mode: self.snapshot.mode.clone(),
+            client_config: self.snapshot.client_config.clone(),
+            server_config: self.snapshot.server_config.clone(),
+        };
+        if let Err(err) = write_persisted_state(&self.persist_path, &payload) {
+            self.push_log("warn", format!("配置保存失败：{err}"));
         }
     }
 }
@@ -204,17 +292,18 @@ impl AppState {
     }
 
     fn update_effective(&mut self) {
+        let config = &self.snapshot.client_config;
         let requested = SessionParams {
-            codec: self.snapshot.config.codec.clone(),
-            sample_rate_hz: self.snapshot.config.sample_rate_hz,
+            codec: config.codec.clone(),
+            sample_rate_hz: config.sample_rate_hz,
             channels: 1,
-            chunk_ms: self.snapshot.config.chunk_ms,
-            opus_bitrate_kbps: if self.snapshot.config.codec == "opus" {
-                Some(self.snapshot.config.opus_bitrate_kbps)
+            chunk_ms: config.chunk_ms,
+            opus_bitrate_kbps: if config.codec == "opus" {
+                Some(config.opus_bitrate_kbps)
             } else {
                 None
             },
-            jitter_buffer_ms: self.snapshot.config.jitter_buffer_ms,
+            jitter_buffer_ms: config.jitter_buffer_ms,
         };
         let result = normalize_session_params(&requested);
         self.snapshot.effective = result.effective;
@@ -258,12 +347,28 @@ impl AppState {
             self.snapshot.metrics.buffer_depth_ms + self.snapshot.metrics.rtt_ms + 12.0;
         self.snapshot.metrics.audio_rms = self.latest_audio_rms;
         self.snapshot.metrics.audio_peak = self.latest_audio_peak;
-        self.snapshot.metrics.uplink_kbps = if self.snapshot.config.codec == "opus" {
-            self.snapshot.config.opus_bitrate_kbps as f32
+        let config = &self.snapshot.client_config;
+        self.snapshot.metrics.uplink_kbps = if config.codec == "opus" {
+            config.opus_bitrate_kbps as f32
         } else {
-            (self.snapshot.config.sample_rate_hz as f32 * 16.0) / 1000.0
+            (config.sample_rate_hz as f32 * 16.0) / 1000.0
         };
     }
+}
+
+fn read_persisted_state(path: &PathBuf) -> Option<PersistedState> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_persisted_state(path: &PathBuf, state: &PersistedState) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("创建配置目录失败：{err}"))?;
+    }
+    let payload =
+        serde_json::to_vec_pretty(state).map_err(|err| format!("配置序列化失败：{err}"))?;
+    fs::write(path, payload).map_err(|err| format!("配置写入失败：{err}"))
 }
 
 #[tauri::command]
@@ -281,19 +386,30 @@ fn set_mode(state: State<SharedState>, app: AppHandle, mode: String) -> UiSnapsh
 }
 
 #[tauri::command]
-fn set_config(state: State<SharedState>, app: AppHandle, config: UiConfig) -> UiSnapshot {
-    let snapshot = apply_set_config(state.inner(), config);
+fn set_client_config(
+    state: State<SharedState>,
+    app: AppHandle,
+    config: UiClientConfig,
+) -> UiSnapshot {
+    let snapshot = apply_set_client_config(state.inner(), config);
+    emit_snapshot(&app, &snapshot);
+    snapshot
+}
+
+#[tauri::command]
+fn set_server_config(
+    state: State<SharedState>,
+    app: AppHandle,
+    config: UiServerConfig,
+) -> UiSnapshot {
+    let snapshot = apply_set_server_config(state.inner(), config);
     emit_snapshot(&app, &snapshot);
     snapshot
 }
 
 #[tauri::command]
 fn reset_defaults(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        *guard = AppState::default();
-        guard.snapshot.clone()
-    };
+    let snapshot = apply_reset_defaults(state.inner());
     emit_snapshot(&app, &snapshot);
     snapshot
 }
@@ -304,10 +420,12 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     let snapshot = apply_start(state.inner());
 
     emit_snapshot(&app, &snapshot);
-    ensure_metrics_loop(state.inner().clone(), app.clone());
     if mode == "client" {
+        ensure_metrics_loop(state.inner().clone(), app.clone());
         // 先启动本地采集，确保 macOS 触发权限提示并预览波形。
         ensure_capture_loop(state.inner().clone(), app.clone());
+    } else {
+        ensure_server_monitor_loop(state.inner().clone(), app.clone());
     }
 
     if mode == "client" {
@@ -318,9 +436,9 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
                 let guard = state.lock().expect("state lock");
                 let server_addr = format!(
                     "{}:{}",
-                    guard.snapshot.config.server_addr, guard.snapshot.config.server_port
+                    guard.snapshot.client_config.server_addr, guard.snapshot.client_config.server_port
                 );
-                let request = build_handshake_request(&guard.snapshot.config);
+                let request = build_handshake_request(&guard.snapshot.client_config);
                 (server_addr, request)
             };
 
@@ -352,6 +470,51 @@ fn stop(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
 #[tauri::command]
 fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
+    let mode = { state.lock().expect("state lock").snapshot.mode.clone() };
+    if mode == "server" {
+        let server_addr = {
+            let guard = state.lock().expect("state lock");
+            format!(
+                "127.0.0.1:{}",
+                guard.snapshot.server_config.listen_port
+            )
+        };
+        let result = send_server_command(&server_addr, "force_disconnect");
+
+        let snapshot = {
+            let mut guard = state.lock().expect("state lock");
+            match result {
+                Ok(resp) if resp.ok => {
+                    guard.push_log("warn", "已向服务端发送强制断开命令");
+                    guard.snapshot.runtime.peer_addr = None;
+                    guard.snapshot.status = "listening".to_string();
+                    guard.snapshot.status_note = "已断开客户端".to_string();
+                    guard.snapshot.runtime.connected_seconds = 0;
+                    guard.snapshot.runtime.last_error = None;
+                    guard.snapshot.clone()
+                }
+                Ok(resp) => {
+                    let message = resp
+                        .message
+                        .unwrap_or_else(|| "服务端拒绝强制断开".to_string());
+                    guard.snapshot.runtime.last_error = Some(message.clone());
+                    guard.push_log("error", message);
+                    guard.snapshot.clone()
+                }
+                Err(err) => {
+                    guard.snapshot.runtime.last_error = Some(format!("服务端未响应：{err}"));
+                    guard.push_log(
+                        "error",
+                        format!("服务端未响应（{server_addr}）：{err}"),
+                    );
+                    guard.snapshot.clone()
+                }
+            }
+        };
+        emit_snapshot(&app, &snapshot);
+        return snapshot;
+    }
+
     let snapshot = apply_force_disconnect(state.inner());
     emit_snapshot(&app, &snapshot);
     snapshot
@@ -415,6 +578,59 @@ fn ensure_metrics_loop(state: SharedState, app: AppHandle) {
     });
 }
 
+fn ensure_server_monitor_loop(state: SharedState, app: AppHandle) {
+    let should_spawn = {
+        let mut guard = state.lock().expect("state lock");
+        if guard.server_monitor_loop {
+            false
+        } else {
+            guard.server_monitor_loop = true;
+            true
+        }
+    };
+
+    if !should_spawn {
+        return;
+    }
+
+    std::thread::spawn(move || loop {
+        let (streaming, mode, server_addr) = {
+            let guard = state.lock().expect("state lock");
+            (
+                guard.streaming,
+                guard.snapshot.mode.clone(),
+                format!(
+                    "127.0.0.1:{}",
+                    guard.snapshot.server_config.listen_port
+                ),
+            )
+        };
+
+        if !streaming || mode != "server" {
+            let mut guard = state.lock().expect("state lock");
+            guard.server_monitor_loop = false;
+            return;
+        }
+
+        let response = send_server_status_request(&server_addr);
+        let snapshot = {
+            let mut guard = state.lock().expect("state lock");
+            if !guard.streaming || guard.snapshot.mode != "server" {
+                guard.server_monitor_loop = false;
+                return;
+            }
+            match response {
+                Ok(status) => apply_server_status(&mut guard, status),
+                Err(err) => apply_server_status_error(&mut guard, err),
+            }
+            guard.snapshot.clone()
+        };
+
+        emit_snapshot(&app, &snapshot);
+        std::thread::sleep(Duration::from_millis(SERVER_STATUS_POLL_MS));
+    });
+}
+
 fn ensure_capture_loop(state: SharedState, app: AppHandle) {
     let should_spawn = {
         let mut guard = state.lock().expect("state lock");
@@ -435,7 +651,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
             let guard = state.lock().expect("state lock");
             (
                 guard.snapshot.effective.clone(),
-                guard.snapshot.config.input_device.clone(),
+                guard.snapshot.client_config.input_device.clone(),
             )
         };
 
@@ -525,7 +741,55 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
     });
 }
 
-fn build_handshake_request(config: &UiConfig) -> HandshakeRequest {
+fn apply_server_status(state: &mut AppState, response: ServerStatusResponse) {
+    let status = response.state.as_str();
+    let (ui_status, note) = match status {
+        "listening" | "idle" => ("listening", "等待客户端连接"),
+        "streaming" => ("streaming", "已连接客户端"),
+        "reconnecting" => ("connecting", "等待客户端重连"),
+        _ => ("connecting", "服务端运行中"),
+    };
+
+    state.snapshot.status = ui_status.to_string();
+    state.snapshot.status_note = note.to_string();
+    state.snapshot.runtime.peer_addr = response.active_client.clone();
+    state.snapshot.runtime.connected_seconds = response.active_client_seconds;
+    state.snapshot.runtime.last_error = response.last_error.clone();
+    state.snapshot.runtime.virtual_mic_name = response.virtual_mic_name.clone();
+    state.snapshot.runtime.virtual_mic_ready = response.virtual_mic_ready;
+    state.snapshot.runtime.virtual_mic_error = response.virtual_mic_error.clone();
+
+    apply_stats_to_metrics(&response.stats, &mut state.snapshot.metrics);
+}
+
+fn apply_server_status_error(state: &mut AppState, err: String) {
+    state.snapshot.status = "error".to_string();
+    state.snapshot.status_note = "服务端未响应".to_string();
+    state.snapshot.runtime.peer_addr = None;
+    state.snapshot.runtime.connected_seconds = 0;
+    state.snapshot.runtime.last_error = Some(err);
+    state.snapshot.runtime.virtual_mic_ready = false;
+    state.snapshot.runtime.virtual_mic_error = Some("服务端未响应".to_string());
+    state.reset_metrics();
+}
+
+fn apply_stats_to_metrics(stats: &StatsSnapshot, metrics: &mut UiMetrics) {
+    let loss_pct = if stats.packets_received > 0 {
+        (stats.packets_lost as f32 / stats.packets_received as f32) * 100.0
+    } else {
+        0.0
+    };
+    metrics.rtt_ms = 0.0;
+    metrics.packet_loss_pct = loss_pct;
+    metrics.buffer_depth_ms = stats.buffer_depth_ms as f32;
+    metrics.jitter_buffer_depth_ms = stats.jitter_buffer_depth_ms;
+    metrics.estimated_e2e_latency_ms = stats.estimated_e2e_latency_ms;
+    metrics.audio_rms = stats.audio_rms;
+    metrics.audio_peak = stats.audio_peak;
+    metrics.uplink_kbps = 0.0;
+}
+
+fn build_handshake_request(config: &UiClientConfig) -> HandshakeRequest {
     let requested = SessionParams {
         codec: config.codec.clone(),
         sample_rate_hz: config.sample_rate_hz,
@@ -584,6 +848,83 @@ fn perform_handshake(
         decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
     if response.session_id != request.session_id {
         return Err("handshake response session mismatch".to_string());
+    }
+    Ok(response)
+}
+
+fn send_server_status_request(server_addr: &str) -> Result<ServerStatusResponse, String> {
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(800)))
+        .map_err(|err| format!("set udp timeout failed: {err}"))?;
+
+    let request = ServerStatusRequest {
+        request_id: format!("status-{}", now_ms()),
+    };
+    let payload = encode_control_message(CONTROL_TYPE_SERVER_STATUS_REQUEST, &request)
+        .map_err(|err| format!("encode status request failed: {err}"))?;
+    let datagram = wrap_control_json(&payload);
+    socket
+        .send_to(&datagram, server_addr)
+        .map_err(|err| format!("send status request failed: {err}"))?;
+
+    let mut buf = [0_u8; 2048];
+    let (len, _addr) = socket
+        .recv_from(&mut buf)
+        .map_err(|err| format!("recv status response failed: {err}"))?;
+    let (kind, payload) = split_datagram(&buf[..len]).ok_or("invalid status datagram")?;
+    if kind != DatagramKind::ControlJson {
+        return Err("unexpected status response kind".to_string());
+    }
+    let (msg_type, payload_value) =
+        decode_control_message(payload).map_err(|err| format!("{err}"))?;
+    if msg_type.as_str() != CONTROL_TYPE_SERVER_STATUS_RESPONSE {
+        return Err(format!("unexpected status response type: {msg_type}"));
+    }
+    let response: ServerStatusResponse =
+        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
+    if response.request_id != request.request_id {
+        return Err("status response request_id mismatch".to_string());
+    }
+    Ok(response)
+}
+
+fn send_server_command(server_addr: &str, action: &str) -> Result<ServerCommandResponse, String> {
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(800)))
+        .map_err(|err| format!("set udp timeout failed: {err}"))?;
+
+    let request = ServerCommandRequest {
+        request_id: format!("cmd-{}", now_ms()),
+        action: action.to_string(),
+    };
+    let payload = encode_control_message(CONTROL_TYPE_SERVER_COMMAND_REQUEST, &request)
+        .map_err(|err| format!("encode server command failed: {err}"))?;
+    let datagram = wrap_control_json(&payload);
+    socket
+        .send_to(&datagram, server_addr)
+        .map_err(|err| format!("send server command failed: {err}"))?;
+
+    let mut buf = [0_u8; 2048];
+    let (len, _addr) = socket
+        .recv_from(&mut buf)
+        .map_err(|err| format!("recv server command response failed: {err}"))?;
+    let (kind, payload) = split_datagram(&buf[..len]).ok_or("invalid command datagram")?;
+    if kind != DatagramKind::ControlJson {
+        return Err("unexpected command response kind".to_string());
+    }
+    let (msg_type, payload_value) =
+        decode_control_message(payload).map_err(|err| format!("{err}"))?;
+    if msg_type.as_str() != CONTROL_TYPE_SERVER_COMMAND_RESPONSE {
+        return Err(format!("unexpected command response type: {msg_type}"));
+    }
+    let response: ServerCommandResponse =
+        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
+    if response.request_id != request.request_id {
+        return Err("command response request_id mismatch".to_string());
     }
     Ok(response)
 }
@@ -659,25 +1000,69 @@ fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
         "未知".to_string()
     };
     guard.snapshot.runtime.last_error = None;
+    guard.snapshot.runtime.virtual_mic_ready = false;
+    guard.snapshot.runtime.virtual_mic_error = None;
     guard.streaming = false;
     guard.connected_since = None;
     guard.latest_audio_rms = 0.0;
     guard.latest_audio_peak = 0;
     guard.reset_metrics();
     guard.refresh_devices();
+    guard.update_effective();
     let mode_label = guard.snapshot.mode.clone();
     guard.push_log("info", format!("切换到 {} 模式", mode_label));
+    guard.persist();
     guard.snapshot.clone()
 }
 
-fn apply_set_config(state: &SharedState, config: UiConfig) -> UiSnapshot {
+fn apply_set_client_config(state: &SharedState, config: UiClientConfig) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
-    guard.snapshot.config = UiConfig {
+    guard.snapshot.client_config = UiClientConfig {
         channels: 1,
         ..config
     };
     guard.update_effective();
-    guard.push_log("info", "已更新配置");
+    guard.push_log("info", "已更新客户端配置");
+    guard.persist();
+    guard.snapshot.clone()
+}
+
+fn apply_set_server_config(state: &SharedState, config: UiServerConfig) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    guard.snapshot.server_config = config;
+    guard.push_log("info", "已更新服务端配置");
+    guard.persist();
+    guard.snapshot.clone()
+}
+
+fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    let default_params = SessionParams::mvp_default();
+    guard.snapshot.mode = "client".to_string();
+    guard.snapshot.status = "idle".to_string();
+    guard.snapshot.status_note = "准备就绪".to_string();
+    guard.snapshot.client_config = default_client_config(&default_params);
+    guard.snapshot.server_config = default_server_config();
+    guard.snapshot.effective = default_params;
+    guard.snapshot.fallbacks.clear();
+    guard.snapshot.runtime.peer_addr = None;
+    guard.snapshot.runtime.connected_seconds = 0;
+    guard.snapshot.runtime.mic_permission = "未知".to_string();
+    guard.snapshot.runtime.last_error = None;
+    guard.snapshot.runtime.virtual_mic_ready = false;
+    guard.snapshot.runtime.virtual_mic_error = None;
+    guard.streaming = false;
+    guard.metrics_loop = false;
+    guard.capture_loop = false;
+    guard.server_monitor_loop = false;
+    guard.connected_since = None;
+    guard.latest_audio_rms = 0.0;
+    guard.latest_audio_peak = 0;
+    guard.reset_metrics();
+    guard.refresh_devices();
+    guard.snapshot.logs.clear();
+    guard.push_log("info", "已恢复默认配置");
+    guard.persist();
     guard.snapshot.clone()
 }
 
@@ -713,6 +1098,8 @@ fn apply_stop(state: &SharedState) -> UiSnapshot {
         guard.snapshot.runtime.mic_permission = "未知".to_string();
     }
     guard.snapshot.runtime.last_error = None;
+    guard.snapshot.runtime.virtual_mic_ready = false;
+    guard.snapshot.runtime.virtual_mic_error = None;
     guard.reset_metrics();
     guard.push_log("warn", "已停止运行");
     guard.snapshot.clone()
@@ -784,13 +1171,17 @@ fn build_waveform(samples: &[i16], points: usize) -> (Vec<f32>, f32, u32) {
 }
 
 fn main() {
-    let state: SharedState = Arc::new(Mutex::new(AppState::default()));
     tauri::Builder::default()
-        .manage(state)
+        .setup(|app| {
+            let state = AppState::load_or_default(app.handle());
+            app.manage(Arc::new(Mutex::new(state)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_status,
             set_mode,
-            set_config,
+            set_client_config,
+            set_server_config,
             reset_defaults,
             start,
             stop,
@@ -807,7 +1198,10 @@ mod tests {
     use super::*;
 
     fn fresh_state() -> SharedState {
-        Arc::new(Mutex::new(AppState::default()))
+        Arc::new(Mutex::new(AppState::new_with_path(
+            PathBuf::from("/tmp/netmic-ui-test.json"),
+            None,
+        )))
     }
 
     #[test]
@@ -833,12 +1227,11 @@ mod tests {
     }
 
     #[test]
-    fn ipc_set_config_updates_effective_and_fallbacks() {
+    fn ipc_set_client_config_updates_effective_and_fallbacks() {
         let state = fresh_state();
-        let config = UiConfig {
+        let config = UiClientConfig {
             server_addr: "127.0.0.1".to_string(),
             server_port: 43000,
-            listen_port: 43000,
             input_device: "系统默认".to_string(),
             codec: "opus".to_string(),
             sample_rate_hz: 12_345,
@@ -847,11 +1240,9 @@ mod tests {
             opus_bitrate_kbps: 999,
             jitter_buffer_ms: 999,
             auto_reconnect: true,
-            force_takeover: false,
             pairing_token: "".to_string(),
-            virtual_mic_enabled: false,
         };
-        let snapshot = apply_set_config(&state, config);
+        let snapshot = apply_set_client_config(&state, config);
         assert!(snapshot
             .fallbacks
             .iter()
@@ -974,12 +1365,12 @@ mod tests {
 
     #[test]
     fn update_effective_records_fallbacks() {
-        let mut state = AppState::default();
-        state.snapshot.config.codec = "opus".to_string();
-        state.snapshot.config.sample_rate_hz = 12_345;
-        state.snapshot.config.chunk_ms = 15;
-        state.snapshot.config.opus_bitrate_kbps = 999;
-        state.snapshot.config.jitter_buffer_ms = 999;
+        let mut state = AppState::new_with_path(PathBuf::from("/tmp/netmic-ui-test.json"), None);
+        state.snapshot.client_config.codec = "opus".to_string();
+        state.snapshot.client_config.sample_rate_hz = 12_345;
+        state.snapshot.client_config.chunk_ms = 15;
+        state.snapshot.client_config.opus_bitrate_kbps = 999;
+        state.snapshot.client_config.jitter_buffer_ms = 999;
 
         state.update_effective();
 

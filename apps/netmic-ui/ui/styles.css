@@ -152,6 +152,22 @@ body {
   color: var(--muted);
 }
 
+.status-alert {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(27, 26, 23, 0.12);
+  background: rgba(27, 26, 23, 0.03);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-alert.danger {
+  border-color: rgba(214, 69, 69, 0.5);
+  background: rgba(214, 69, 69, 0.08);
+  color: var(--danger);
+}
+
 .top-actions {
   display: flex;
   gap: 10px;

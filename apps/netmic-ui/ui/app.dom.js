@@ -81,46 +81,52 @@ export const renderConfig = ({
   bufferOptions,
 }) => {
   const isRunning = isBusy(state);
+  const clientConfig = state.client_config || {};
+  const serverConfig = state.server_config || {};
+  const isClient = state.mode === "client";
+
   elements.configConnection.innerHTML = `
     <h3>连接配置</h3>
     <p>与服务端建立 UDP 会话（默认端口 43000）。</p>
     ${
-      state.mode === "client"
+      isClient
         ? `
         <div class="inline-row">
           <div class="form-row">
             <label>Server IP</label>
-            <input data-field="server_addr" value="${state.config.server_addr}" ${
+            <input data-field="server_addr" value="${clientConfig.server_addr || ""}" ${
               isRunning ? "disabled" : ""
             } />
           </div>
           <div class="form-row">
             <label>端口</label>
-            <input type="number" data-field="server_port" value="${state.config.server_port}" ${
-              isRunning ? "disabled" : ""
-            } />
+            <input type="number" data-field="server_port" value="${
+              clientConfig.server_port ?? 43000
+            }" ${isRunning ? "disabled" : ""} />
           </div>
         </div>
         `
         : `
         <div class="form-row">
           <label>监听端口</label>
-          <input type="number" data-field="listen_port" value="${state.config.listen_port}" ${
-            isRunning ? "disabled" : ""
-          } />
+          <input type="number" data-field="listen_port" value="${
+            serverConfig.listen_port ?? 43000
+          }" ${isRunning ? "disabled" : ""} />
         </div>
+        <div class="list-item">本地控制端口与监听端口一致。</div>
         `
     }
   `;
 
-  elements.configAudio.innerHTML = `
+  elements.configAudio.innerHTML = isClient
+    ? `
     <h3>音频参数</h3>
     <p>所有参数必须在 MVP 安全范围内。</p>
     <div class="form-row">
       <label>编码器</label>
       <select data-field="codec" ${isRunning ? "disabled" : ""}>
-        <option value="opus" ${state.config.codec === "opus" ? "selected" : ""}>Opus</option>
-        <option value="pcm16" ${state.config.codec === "pcm16" ? "selected" : ""}>PCM16</option>
+        <option value="opus" ${clientConfig.codec === "opus" ? "selected" : ""}>Opus</option>
+        <option value="pcm16" ${clientConfig.codec === "pcm16" ? "selected" : ""}>PCM16</option>
       </select>
     </div>
     <div class="inline-row">
@@ -131,7 +137,7 @@ export const renderConfig = ({
             .map(
               (rate) =>
                 `<option value="${rate}" ${
-                  state.config.sample_rate_hz === rate ? "selected" : ""
+                  clientConfig.sample_rate_hz === rate ? "selected" : ""
                 }>${rate} Hz</option>`
             )
             .join("")}
@@ -143,9 +149,9 @@ export const renderConfig = ({
           ${chunkOptions
             .map(
               (ms) =>
-                `<option value="${ms}" ${state.config.chunk_ms === ms ? "selected" : ""}>${
-                  ms
-                } ms</option>`
+                `<option value="${ms}" ${
+                  clientConfig.chunk_ms === ms ? "selected" : ""
+                }>${ms} ms</option>`
             )
             .join("")}
         </select>
@@ -155,10 +161,8 @@ export const renderConfig = ({
       <div class="form-row">
         <label>Opus 比特率</label>
         <input type="number" data-field="opus_bitrate_kbps" value="${
-          state.config.opus_bitrate_kbps
-        }" ${
-    isRunning || state.config.codec !== "opus" ? "disabled" : ""
-  } />
+          clientConfig.opus_bitrate_kbps ?? 48
+        }" ${isRunning || clientConfig.codec !== "opus" ? "disabled" : ""} />
       </div>
       <div class="form-row">
         <label>缓冲（buffer）</label>
@@ -167,7 +171,7 @@ export const renderConfig = ({
             .map(
               (ms) =>
                 `<option value="${ms}" ${
-                  state.config.jitter_buffer_ms === ms ? "selected" : ""
+                  clientConfig.jitter_buffer_ms === ms ? "selected" : ""
                 }>${ms} ms</option>`
             )
             .join("")}
@@ -175,9 +179,14 @@ export const renderConfig = ({
       </div>
     </div>
     <div class="badge">内部标准：PCM16 / mono / 48k</div>
+  `
+    : `
+    <h3>音频参数</h3>
+    <p>服务端模式下由客户端决定会话参数。</p>
   `;
 
-  elements.configClient.innerHTML = `
+  elements.configClient.innerHTML = isClient
+    ? `
     <h3>客户端设置</h3>
     <p>输入设备与重连策略。</p>
     <div class="form-row">
@@ -187,7 +196,7 @@ export const renderConfig = ({
           .map(
             (device) =>
               `<option value="${device}" ${
-                state.config.input_device === device ? "selected" : ""
+                clientConfig.input_device === device ? "selected" : ""
               }>${device}</option>`
           )
           .join("")}
@@ -195,35 +204,44 @@ export const renderConfig = ({
     </div>
     <label class="toggle">
       <input type="checkbox" data-field="auto_reconnect" ${
-        state.config.auto_reconnect ? "checked" : ""
+        clientConfig.auto_reconnect ? "checked" : ""
       } ${isRunning ? "disabled" : ""} />
       自动重连（指数退避）
     </label>
+    <div class="form-row">
+      <label>配对码（预留）</label>
+      <input data-field="pairing_token" value="${clientConfig.pairing_token || ""}" disabled />
+    </div>
     <div class="list-item">麦克风权限：${state.runtime.mic_permission}</div>
+  `
+    : `
+    <h3>客户端设置</h3>
+    <p>服务端模式下不适用。</p>
   `;
 
-  elements.configServer.innerHTML = `
+  elements.configServer.innerHTML = !isClient
+    ? `
     <h3>服务端设置</h3>
     <p>虚拟麦克风与占用策略。</p>
     <label class="toggle">
       <input type="checkbox" data-field="virtual_mic_enabled" ${
-        state.config.virtual_mic_enabled ? "checked" : ""
+        serverConfig.virtual_mic_enabled ? "checked" : ""
       } />
       启用虚拟麦克风（${state.runtime.virtual_mic_name}）
     </label>
     <label class="toggle">
       <input type="checkbox" data-field="force_takeover" ${
-        state.config.force_takeover ? "checked" : ""
+        serverConfig.force_takeover ? "checked" : ""
       } ${isRunning ? "disabled" : ""} />
       允许强制抢占（默认关闭）
     </label>
-    <div class="form-row">
-      <label>配对码（预留）</label>
-      <input data-field="pairing_token" value="${state.config.pairing_token}" disabled />
-    </div>
     <button class="ghost" id="force-disconnect" ${
       state.mode === "server" && state.runtime.peer_addr ? "" : "disabled"
     }>强制断开客户端</button>
+  `
+    : `
+    <h3>服务端设置</h3>
+    <p>客户端模式下不适用。</p>
   `;
 
   const fallbackList = state.fallbacks
@@ -246,12 +264,39 @@ export const renderConfig = ({
 
 export const renderStatus = ({ state, elements, ensureWaveformCanvas }) => {
   const lastError = state.runtime?.last_error;
+  const listenPort = state.server_config?.listen_port ?? 43000;
+  const serverUnresponsive =
+    state.mode === "server" &&
+    state.status === "error" &&
+    (state.status_note || "").includes("服务端未响应");
+  const controlPortLine =
+    state.mode === "server"
+      ? `<div class="list-item">本地控制端口：${listenPort}（= listen_port）</div>`
+      : "";
+  const virtualMicLine =
+    state.mode === "server"
+      ? `<div class="list-item">虚拟麦克风：${
+          state.runtime.virtual_mic_ready ? "已就绪" : "未就绪"
+        }（${state.runtime.virtual_mic_name || "未设置"}）</div>`
+      : "";
+  const virtualMicErrorLine =
+    state.mode === "server" && state.runtime.virtual_mic_error
+      ? `<div class="list-item">虚拟麦错误：${state.runtime.virtual_mic_error}</div>`
+      : "";
   elements.statusConnection.innerHTML = `
     <h3>连接状态</h3>
     <p>${state.status_note || ""}</p>
+    ${
+      serverUnresponsive
+        ? `<div class="status-alert danger">服务端未响应，请确认服务端已启动且监听 ${listenPort}</div>`
+        : ""
+    }
     <div class="list">
       <div class="list-item">模式：${state.mode === "client" ? "Client" : "Server"}</div>
       <div class="list-item">状态：${statusMap[state.status]?.label || "--"}</div>
+      ${controlPortLine}
+      ${virtualMicLine}
+      ${virtualMicErrorLine}
       <div class="list-item">连接时长：${formatDuration(state.runtime.connected_seconds)}</div>
       <div class="list-item">对端：${state.runtime.peer_addr || "未连接"}</div>
       ${lastError ? `<div class="list-item">错误提示：${lastError}</div>` : ""}

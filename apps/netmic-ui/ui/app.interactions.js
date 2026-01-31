@@ -1,7 +1,8 @@
-export const bindConfigInputs = ({ root, state, setState, adapter }) => {
+export const bindConfigInputs = ({ root, getState, setState, adapter }) => {
   if (!root) return;
   root.querySelectorAll("[data-field]").forEach((input) => {
     input.addEventListener("change", async (event) => {
+      const state = getState();
       const target = event.target;
       const field = target.dataset.field;
       let value = target.value;
@@ -12,8 +13,12 @@ export const bindConfigInputs = ({ root, state, setState, adapter }) => {
         value = Number(value);
       }
 
-      const nextConfig = { ...state.config, [field]: value };
-      const snapshot = await adapter.setConfig(nextConfig);
+      const isClient = state.mode === "client";
+      const baseConfig = isClient ? state.client_config || {} : state.server_config || {};
+      const nextConfig = { ...baseConfig, [field]: value };
+      const snapshot = isClient
+        ? await adapter.setClientConfig(nextConfig)
+        : await adapter.setServerConfig(nextConfig);
       setState(snapshot);
     });
   });
@@ -29,7 +34,7 @@ export const bindConfigInputs = ({ root, state, setState, adapter }) => {
 
 export const bindActions = ({
   elements,
-  state,
+  getState,
   setState,
   adapter,
   setActiveTab,
@@ -38,7 +43,7 @@ export const bindActions = ({
 }) => {
   elements.modeButtons.forEach((btn) => {
     btn.addEventListener("click", async () => {
-      if (isBusy(state)) return;
+      if (isBusy(getState())) return;
       const snapshot = await adapter.setMode(btn.dataset.mode);
       setState(snapshot);
     });
@@ -49,7 +54,7 @@ export const bindActions = ({
   });
 
   elements.primaryAction.addEventListener("click", async () => {
-    const snapshot = isBusy(state) ? await adapter.stop() : await adapter.start();
+    const snapshot = isBusy(getState()) ? await adapter.stop() : await adapter.start();
     setState(snapshot);
   });
 
