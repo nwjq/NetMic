@@ -96,6 +96,12 @@ const createTauriAdapter = (tauriApi) => {
     async forceDisconnect() {
       return invoke("force_disconnect");
     },
+    async createVirtualMic() {
+      return invoke("virtual_mic_create");
+    },
+    async removeVirtualMic() {
+      return invoke("virtual_mic_remove");
+    },
     async clearLogs() {
       return invoke("clear_logs");
     },
@@ -125,8 +131,34 @@ let adapter = hasTauri ? createTauriAdapter(tauriApi) : createMockAdapter();
 
 const getState = () => state;
 
+const mergeSnapshot = (current, next) => {
+  if (!current) return next;
+  if (!next) return current;
+  const currentUpdated = current.runtime?.server_status_updated_ms ?? 0;
+  const nextUpdated = next.runtime?.server_status_updated_ms ?? 0;
+  const nextStatus = next.status;
+  const shouldKeepServerRuntime =
+    next.mode === "server" &&
+    nextStatus !== "idle" &&
+    nextStatus !== "error" &&
+    currentUpdated > 0 &&
+    nextUpdated < currentUpdated;
+
+  if (!shouldKeepServerRuntime) return next;
+
+  const merged = { ...next };
+  merged.runtime = { ...next.runtime, ...current.runtime };
+  merged.metrics = current.metrics || next.metrics;
+  merged.status = current.status;
+  merged.status_note = current.status_note;
+  if (Array.isArray(current.logs) && current.logs.length > (next.logs || []).length) {
+    merged.logs = current.logs;
+  }
+  return merged;
+};
+
 const setState = (snapshot) => {
-  state = snapshot;
+  state = mergeSnapshot(state, snapshot);
   render();
 };
 

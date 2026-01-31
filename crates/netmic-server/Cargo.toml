@@ -9,3 +9,7 @@ netmic-proto = { path = "../netmic-proto" }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libpulse-binding = "2.29"
+libpulse-simple-binding = "2.29"

@@ -6,8 +6,8 @@
 ## 设计边界
 - UI 仅覆盖 MVP 需求：配置 / 状态 / 日志。
 - 参数安全范围仍以 `MVP.md` 为准；UI 只是输入与提示层。
-- IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `start` / `stop` / `set_mode`。
-- **独立进程模式**：服务端独立运行，UI 通过 UDP 控制面请求状态/发送命令（默认使用 `listen_port`）。
+- IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `start` / `stop` / `set_mode` / `force_disconnect` / `virtual_mic_create` / `virtual_mic_remove`。
+- **独立进程模式**：服务端独立运行，UI 通过 UDP 控制面请求状态/发送命令（默认使用 `listen_port`）。为了减少用户心智负担，Server 模式点击“启动监听”会自动拉起服务端进程（若未运行）；可用 `NETMIC_SERVER_BIN` 指定服务端可执行文件路径。编译 UI 时会一并编译 `netmic-server` 与 `netmic-client`，并放在 `target/<profile>/` 供启动与联调。
 
 ## 视图模型（UiSnapshot）
 
@@ -40,7 +40,7 @@
 ### UiServerConfig（服务端配置）
 - `listen_port: u16`
 - `force_takeover: bool`（默认 false）
-- `virtual_mic_enabled: bool`
+- `virtual_mic_enabled: bool`（默认 true；切换时触发虚拟麦克风创建/移除）
 
 ### UiMetrics（展示指标）
 - `rtt_ms: f32`
@@ -62,6 +62,7 @@
 - `reconnect_attempts: u32`
 - `mic_permission: String`（macOS 权限状态：已授权 / 未授权 / 不可用 / 未知 / 不适用）
 - `virtual_mic_name: String`
+- `server_status_updated_ms: u64`（服务端状态最后更新时间戳，毫秒）
 - `last_error: Option<String>`（最近一次错误原因，用于状态页明确提示）
 
 ### UiDevices
@@ -87,6 +88,8 @@
 - `start() -> UiSnapshot`
 - `stop() -> UiSnapshot`
 - `force_disconnect() -> UiSnapshot`
+- `virtual_mic_create() -> UiSnapshot`
+- `virtual_mic_remove() -> UiSnapshot`
 - `clear_logs() -> UiSnapshot`
 - `export_logs() -> { ok: bool }`
 
@@ -103,6 +106,15 @@ UI 在 Server 模式下通过 UDP 控制面轮询：
 状态页需明确展示：
 - 本地控制端口（= `listen_port`）
 - 虚拟麦克风就绪状态（含错误提示）
+
+## 虚拟麦克风联动（独立进程）
+- Server 模式点击“启动监听”时，若 `virtual_mic_enabled=true`，会发送 `virtual_mic_create` 请求以确保虚拟麦克风就绪。
+- 配置页切换“启用虚拟麦克风”会触发 `virtual_mic_create` / `virtual_mic_remove`。
+- 自动拉起服务端时，默认会带上 `NETMIC_SERVER_UDP_PORT` 与 `NETMIC_SERVER_VIRTUAL_MIC_AUTO_CREATE=1`。
+
+## 服务端进程管理（UI 行为）
+- Server 模式点击“启动监听”时，若服务端未运行，UI 会自动拉起服务端进程。
+- Server 模式点击“停止监听”时，若服务端由 UI 启动且 `NETMIC_UI_SERVER_AUTO_STOP=true`，UI 会自动结束该进程。
 
 ## 事件
 - `netmic://snapshot`：UI 订阅后接收 `UiSnapshot` 推送

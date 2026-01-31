@@ -23,7 +23,7 @@ export const defaultSnapshot = () => ({
   server_config: {
     listen_port: 43000,
     force_takeover: false,
-    virtual_mic_enabled: false,
+    virtual_mic_enabled: true,
   },
   effective: {
     codec: "opus",
@@ -52,6 +52,7 @@ export const defaultSnapshot = () => ({
     virtual_mic_name: "NetMic Virtual Mic",
     virtual_mic_ready: false,
     virtual_mic_error: null,
+    server_status_updated_ms: 0,
     last_error: null,
   },
   devices: {
@@ -216,8 +217,13 @@ export const createMockAdapter = () => {
         mockState.status_note = "等待客户端连接";
         mockState.runtime.peer_addr = null;
         mockState.runtime.last_error = null;
-        mockState.runtime.virtual_mic_ready = true;
-        mockState.runtime.virtual_mic_error = null;
+        if (mockState.server_config.virtual_mic_enabled) {
+          mockState.runtime.virtual_mic_ready = true;
+          mockState.runtime.virtual_mic_error = null;
+        } else {
+          mockState.runtime.virtual_mic_ready = false;
+          mockState.runtime.virtual_mic_error = "未启用虚拟麦克风";
+        }
       }
       pushLog("info", "开始运行（模拟）");
       startTicker();
@@ -241,6 +247,20 @@ export const createMockAdapter = () => {
       mockState.status_note = "已断开客户端";
       mockState.runtime.last_error = null;
       pushLog("warn", "已强制断开客户端（模拟）");
+      emit();
+      return deepClone(mockState);
+    },
+    async createVirtualMic() {
+      mockState.runtime.virtual_mic_ready = true;
+      mockState.runtime.virtual_mic_error = null;
+      pushLog("info", "已创建虚拟麦克风（模拟）");
+      emit();
+      return deepClone(mockState);
+    },
+    async removeVirtualMic() {
+      mockState.runtime.virtual_mic_ready = false;
+      mockState.runtime.virtual_mic_error = "已移除虚拟麦克风（模拟）";
+      pushLog("warn", "已移除虚拟麦克风（模拟）");
       emit();
       return deepClone(mockState);
     },

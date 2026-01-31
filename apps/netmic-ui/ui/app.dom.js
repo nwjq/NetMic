@@ -269,6 +269,17 @@ export const renderStatus = ({ state, elements, ensureWaveformCanvas }) => {
     state.mode === "server" &&
     state.status === "error" &&
     (state.status_note || "").includes("服务端未响应");
+  const statusUpdatedMs = state.runtime?.server_status_updated_ms || 0;
+  const statusAgeSec =
+    statusUpdatedMs > 0 ? Math.max(0, Math.floor((Date.now() - statusUpdatedMs) / 1000)) : null;
+  const statusUpdatedLine =
+    state.mode === "server" && statusUpdatedMs > 0
+      ? `<div class="list-item">状态更新时间：${formatTimestamp(statusUpdatedMs)}</div>`
+      : "";
+  const statusAgeLine =
+    state.mode === "server" && statusAgeSec !== null
+      ? `<div class="list-item">状态更新距今：${statusAgeSec}s</div>`
+      : "";
   const controlPortLine =
     state.mode === "server"
       ? `<div class="list-item">本地控制端口：${listenPort}（= listen_port）</div>`
@@ -297,6 +308,8 @@ export const renderStatus = ({ state, elements, ensureWaveformCanvas }) => {
       ${controlPortLine}
       ${virtualMicLine}
       ${virtualMicErrorLine}
+      ${statusUpdatedLine}
+      ${statusAgeLine}
       <div class="list-item">连接时长：${formatDuration(state.runtime.connected_seconds)}</div>
       <div class="list-item">对端：${state.runtime.peer_addr || "未连接"}</div>
       ${lastError ? `<div class="list-item">错误提示：${lastError}</div>` : ""}

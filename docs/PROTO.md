@@ -121,7 +121,7 @@ Server → UI/管理端
 ### 服务端命令：`ServerCommandRequest`
 UI/管理端 → Server（仅建议 loopback）
 - `request_id: String`
-- `action: String`（当前支持：`force_disconnect`）
+- `action: String`（当前支持：`force_disconnect` / `virtual_mic_create` / `virtual_mic_remove`）
 
 ### 服务端命令响应：`ServerCommandResponse`
 Server → UI/管理端

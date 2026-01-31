@@ -6,7 +6,8 @@
 //! - 控制面/数据面解析均为占位实现，后续再接入真实握手/解码/注入。
 
 use std::env;
-use std::fs::OpenOptions;
+use std::f32::consts::PI;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
@@ -36,6 +37,8 @@ const DEFAULT_UDP_PORT: u16 = 43_000;
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0";
 /// 绑定地址环境变量（支持 host 或 host:port）。
 const ENV_BIND_ADDR: &str = "NETMIC_SERVER_BIND_ADDR";
+/// 是否自动创建虚拟麦克风（1/true/on/yes）。
+const ENV_VIRTUAL_MIC_AUTO_CREATE: &str = "NETMIC_SERVER_VIRTUAL_MIC_AUTO_CREATE";
 /// 单次接收缓冲区大小（足够容纳 MVP 小包）。
 const MAX_DATAGRAM_SIZE: usize = 1500;
 /// 读超时（用于避免无流量时永久阻塞，便于日志可观测）。
@@ -48,6 +51,16 @@ const RECONNECT_WINDOW_SECS: u64 = 10;
 const METRICS_REPORT_SECS: u64 = 5;
 /// 目标缓冲深度（占位：与 MVP 默认 100ms 目标一致）。
 const BUFFER_TARGET_MS: u64 = 100;
+/// 音频 sink 选择（pulse/null，默认 pulse）。
+const ENV_AUDIO_SINK: &str = "NETMIC_SERVER_AUDIO_SINK";
+/// 是否启用测试音注入（1/true/on/yes）。
+const ENV_TEST_TONE: &str = "NETMIC_SERVER_TEST_TONE";
+/// 测试音持续时长（秒，0 表示不限制）。
+const ENV_TEST_TONE_SECS: &str = "NETMIC_SERVER_TEST_TONE_SECS";
+/// 测试音频率（Hz）。
+const ENV_TEST_TONE_HZ: &str = "NETMIC_SERVER_TEST_TONE_HZ";
+/// 测试音幅度（0.0–1.0）。
+const ENV_TEST_TONE_GAIN: &str = "NETMIC_SERVER_TEST_TONE_GAIN";
 
 fn main() -> Result<()> {
     init_tracing();
@@ -55,10 +68,22 @@ fn main() -> Result<()> {
     let params = SessionParams::mvp_default();
     info!(?params, "netmic-server starting with MVP defaults");
 
+    let test_tone = should_enable_test_tone();
+    let auto_create = should_auto_create_virtual_mic() || test_tone;
+    if auto_create {
+        ensure_virtual_mic_created()?;
+    }
+
+    let audio_sink = audio_sink_from_env(&params)?;
+
+    if test_tone {
+        info!("test tone enabled, start injecting sine wave");
+        return run_test_tone(&params, audio_sink);
+    }
+
     let port = udp_port_from_env();
     let bind_addr = bind_addr_from_env(port);
     let socket = bind_udp_socket(&bind_addr)?;
-    let audio_sink = audio_sink_from_env()?;
 
     info!(%bind_addr, "udp receiver skeleton ready");
     run_receiver_loop(&socket, &params, audio_sink)
@@ -132,6 +157,26 @@ mod tests {
         assert_eq!(peak, 1000);
         let expected = ((0.0_f32 * 0.0 + 1000.0_f32 * 1000.0 + 1000.0_f32 * 1000.0) / 3.0).sqrt();
         assert!((rms - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn sine_frame_has_expected_length() {
+        let mut phase = 0.0_f32;
+        let frame = build_sine_frame(440.0, 0.2, 48_000, 960, &mut phase);
+        assert_eq!(frame.len(), 960);
+        assert!(frame.iter().any(|value| *value != 0));
+    }
+
+    #[test]
+    fn sine_frame_clamps_amplitude() {
+        let mut phase = 0.0_f32;
+        let frame = build_sine_frame(440.0, 1.5, 48_000, 10, &mut phase);
+        let max = frame
+            .iter()
+            .map(|value| (*value as i32).unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        assert!(max <= i16::MAX as u32);
     }
 
     #[test]
@@ -554,7 +599,7 @@ impl ReceiverContext {
     fn handle_server_command(
         &mut self,
         request: ServerCommandRequest,
-        now: Instant,
+        _now: Instant,
     ) -> ServerCommandResponse {
         let action = request.action.as_str();
         match action {
@@ -572,6 +617,30 @@ impl ReceiverContext {
                     message: None,
                 }
             }
+            "virtual_mic_create" => match ensure_virtual_mic_created() {
+                Ok(()) => ServerCommandResponse {
+                    request_id: request.request_id,
+                    ok: true,
+                    message: None,
+                },
+                Err(err) => ServerCommandResponse {
+                    request_id: request.request_id,
+                    ok: false,
+                    message: Some(format!("create virtual mic failed: {err}")),
+                },
+            },
+            "virtual_mic_remove" => match remove_virtual_mic() {
+                Ok(()) => ServerCommandResponse {
+                    request_id: request.request_id,
+                    ok: true,
+                    message: None,
+                },
+                Err(err) => ServerCommandResponse {
+                    request_id: request.request_id,
+                    ok: false,
+                    message: Some(format!("remove virtual mic failed: {err}")),
+                },
+            },
             other => ServerCommandResponse {
                 request_id: request.request_id,
                 ok: false,
@@ -634,6 +703,52 @@ impl AudioSink for NullSink {
     }
 }
 
+#[cfg(target_os = "linux")]
+struct PulseAudioSink {
+    simple: libpulse_simple_binding::Simple,
+}
+
+#[cfg(target_os = "linux")]
+impl PulseAudioSink {
+    fn new(sink_name: &str, sample_rate_hz: u32, channels: u16) -> Result<Self> {
+        use libpulse_binding::sample::{Format, Spec};
+        use libpulse_binding::stream::Direction;
+
+        let spec = Spec {
+            format: Format::S16le,
+            channels: channels as u8,
+            rate: sample_rate_hz,
+        };
+        if !spec.is_valid() {
+            return Err(anyhow::anyhow!(
+                "invalid pulse sample spec: rate={sample_rate_hz}, channels={channels}"
+            ));
+        }
+        let simple = libpulse_simple_binding::Simple::new(
+            None,
+            "netmic-server",
+            Direction::Playback,
+            Some(sink_name),
+            "NetMic Virtual Mic",
+            &spec,
+            None,
+            None,
+        )
+        .map_err(|err| anyhow::anyhow!("pulse simple init failed: {err}"))?;
+        Ok(Self { simple })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl AudioSink for PulseAudioSink {
+    fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize> {
+        self.simple
+            .write(payload)
+            .map_err(|err| anyhow::anyhow!("pulse write failed: {err}"))?;
+        Ok(payload.len())
+    }
+}
+
 struct FileDumpSink {
     path: PathBuf,
     file: std::fs::File,
@@ -671,13 +786,13 @@ impl AudioSink for FileDumpSink {
     }
 }
 
-fn audio_sink_from_env() -> Result<Box<dyn AudioSink>> {
+fn audio_sink_from_env(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
     let Ok(raw) = env::var("NETMIC_SERVER_AUDIO_DUMP") else {
-        return Ok(Box::new(NullSink));
+        return build_sink_from_mode(params);
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Ok(Box::new(NullSink));
+        return build_sink_from_mode(params);
     }
     let path = PathBuf::from(trimmed);
     let sink = FileDumpSink::new(path)?;
@@ -685,60 +800,390 @@ fn audio_sink_from_env() -> Result<Box<dyn AudioSink>> {
     Ok(Box::new(sink))
 }
 
-fn virtual_mic_status() -> (String, bool, Option<String>) {
-    let source_name = virtual_mic_source_name();
-    let output = Command::new("pactl")
-        .args(["list", "short", "sources"])
-        .output();
-    let output = match output {
-        Ok(output) => output,
-        Err(err) => {
-            return (
-                source_name,
-                false,
-                Some(format!("pactl 不可用: {err}")),
-            )
+fn should_auto_create_virtual_mic() -> bool {
+    match env::var(ENV_VIRTUAL_MIC_AUTO_CREATE) {
+        Ok(raw) => !matches!(raw.as_str(), "0" | "false" | "off" | "no"),
+        Err(_) => true,
+    }
+}
+
+fn should_enable_test_tone() -> bool {
+    read_bool_env(ENV_TEST_TONE)
+}
+
+fn test_tone_duration_from_env() -> Option<Duration> {
+    match env::var(ENV_TEST_TONE_SECS) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(0) => None,
+            Ok(secs) => Some(Duration::from_secs(secs)),
+            Err(err) => {
+                warn!(%raw, %err, "invalid test tone duration, fallback to 300s");
+                Some(Duration::from_secs(300))
+            }
+        },
+        Err(_) => Some(Duration::from_secs(300)),
+    }
+}
+
+fn test_tone_freq_from_env() -> f32 {
+    match env::var(ENV_TEST_TONE_HZ) {
+        Ok(raw) => raw.parse::<f32>().unwrap_or(440.0),
+        Err(_) => 440.0,
+    }
+}
+
+fn test_tone_gain_from_env() -> f32 {
+    match env::var(ENV_TEST_TONE_GAIN) {
+        Ok(raw) => raw.parse::<f32>().unwrap_or(0.2),
+        Err(_) => 0.2,
+    }
+}
+
+fn run_test_tone(params: &SessionParams, mut sink: Box<dyn AudioSink>) -> Result<()> {
+    let duration = test_tone_duration_from_env();
+    let freq_hz = test_tone_freq_from_env().max(1.0);
+    let gain = test_tone_gain_from_env().clamp(0.0, 0.9);
+    let frame_samples = ((params.sample_rate_hz as u64)
+        .saturating_mul(params.chunk_ms as u64)
+        / 1000)
+        .max(1) as usize;
+    let mut phase = 0.0_f32;
+    let started = Instant::now();
+    let interval = Duration::from_millis(params.chunk_ms.max(1) as u64);
+
+    loop {
+        if let Some(limit) = duration {
+            if started.elapsed() >= limit {
+                info!("test tone duration reached, stop");
+                break;
+            }
         }
-    };
+        let frame = build_sine_frame(freq_hz, gain, params.sample_rate_hz, frame_samples, &mut phase);
+        let payload = pcm16_to_bytes(&frame);
+        sink.write_pcm16(&payload)?;
+        std::thread::sleep(interval);
+    }
+    Ok(())
+}
+
+fn build_sine_frame(
+    freq_hz: f32,
+    gain: f32,
+    sample_rate_hz: u32,
+    frames: usize,
+    phase: &mut f32,
+) -> Vec<i16> {
+    let mut out = Vec::with_capacity(frames);
+    let step = 2.0 * PI * freq_hz / sample_rate_hz.max(1) as f32;
+    for _ in 0..frames {
+        let value = (*phase).sin() * gain;
+        let clamped = value.clamp(-1.0, 1.0);
+        out.push((clamped * i16::MAX as f32) as i16);
+        *phase += step;
+        if *phase >= 2.0 * PI {
+            *phase -= 2.0 * PI;
+        }
+    }
+    out
+}
+
+fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(samples.len() * 2);
+    for sample in samples {
+        buf.extend_from_slice(&sample.to_le_bytes());
+    }
+    buf
+}
+
+fn read_bool_env(name: &str) -> bool {
+    match env::var(name) {
+        Ok(raw) => matches!(raw.as_str(), "1" | "true" | "on" | "yes"),
+        Err(_) => false,
+    }
+}
+
+fn build_sink_from_mode(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
+    let mode = env::var(ENV_AUDIO_SINK).unwrap_or_else(|_| "pulse".to_string());
+    match mode.as_str() {
+        "null" => Ok(Box::new(NullSink)),
+        "pulse" => {
+            #[cfg(target_os = "linux")]
+            {
+                let config = virtual_mic_config_from_env();
+                let sink = PulseAudioSink::new(
+                    config.sink_name.as_str(),
+                    params.sample_rate_hz,
+                    params.channels,
+                )?;
+                info!(
+                    sink = %config.sink_name,
+                    sample_rate_hz = params.sample_rate_hz,
+                    channels = params.channels,
+                    "pulse audio sink ready"
+                );
+                return Ok(Box::new(sink));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(anyhow::anyhow!("pulse sink only supported on linux"))
+            }
+        }
+        other => Err(anyhow::anyhow!(
+            "unsupported NETMIC_SERVER_AUDIO_SINK={other} (expected pulse/null)"
+        )),
+    }
+}
+
+fn virtual_mic_status() -> (String, bool, Option<String>) {
+    let config = virtual_mic_config_from_env();
+    match source_exists(&config.source_name) {
+        Ok(true) => (config.source_name, true, None),
+        Ok(false) => (
+            config.source_name,
+            false,
+            Some("未检测到虚拟麦克风".to_string()),
+        ),
+        Err(err) => (
+            config.source_name,
+            false,
+            Some(format!("pactl 查询失败: {err}")),
+        ),
+    }
+}
+
+struct VirtualMicConfig {
+    state_path: PathBuf,
+    sink_name: String,
+    source_name: String,
+    sink_desc: String,
+    source_desc: String,
+}
+
+fn virtual_mic_config_from_env() -> VirtualMicConfig {
+    let prefix = env_or_default("NETMIC_VIRTUAL_MIC_PREFIX", "netmic");
+    let sink_name = env_or_default("NETMIC_VIRTUAL_MIC_SINK_NAME", &format!("{prefix}_sink"));
+    let source_name =
+        env_or_default("NETMIC_VIRTUAL_MIC_SOURCE_NAME", &format!("{prefix}_source"));
+    let sink_desc = env_or_default("NETMIC_VIRTUAL_MIC_SINK_DESC", "NetMic_Virtual_Sink");
+    let source_desc = env_or_default("NETMIC_VIRTUAL_MIC_SOURCE_DESC", "NetMic_Virtual_Mic");
+    let state_path = PathBuf::from(env_or_default(
+        "NETMIC_VIRTUAL_MIC_STATE",
+        "/tmp/netmic_virtual_mic.env",
+    ));
+    VirtualMicConfig {
+        state_path,
+        sink_name,
+        source_name,
+        sink_desc,
+        source_desc,
+    }
+}
+
+fn env_or_default(name: &str, fallback: &str) -> String {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn ensure_virtual_mic_created() -> Result<()> {
+    let config = virtual_mic_config_from_env();
+    if source_exists(&config.source_name)? {
+        info!(source = %config.source_name, "virtual mic already exists");
+        return Ok(());
+    }
+
+    let sink_id = load_pactl_module(
+        "module-null-sink",
+        &[
+            format!("sink_name={}", config.sink_name),
+            format!("sink_properties=device.description={}", config.sink_desc),
+        ],
+    )?;
+
+    let source_id = load_pactl_module(
+        "module-remap-source",
+        &[
+            format!("master={}.monitor", config.sink_name),
+            format!("source_name={}", config.source_name),
+            format!("source_properties=device.description={}", config.source_desc),
+        ],
+    )
+    .map_err(|err| {
+        let _ = unload_pactl_module(&sink_id);
+        err
+    })?;
+
+    if !source_exists(&config.source_name)? {
+        let _ = unload_pactl_module(&source_id);
+        let _ = unload_pactl_module(&sink_id);
+        return Err(anyhow::anyhow!(
+            "created virtual mic but source not found: {}",
+            config.source_name
+        ));
+    }
+
+    write_virtual_mic_state(&config, &sink_id, &source_id)?;
+    info!(
+        sink = %config.sink_name,
+        source = %config.source_name,
+        sink_id,
+        source_id,
+        "virtual mic created"
+    );
+    Ok(())
+}
+
+fn remove_virtual_mic() -> Result<()> {
+    let config = virtual_mic_config_from_env();
+    let (mut sink_id, mut source_id) = read_virtual_mic_state(&config.state_path);
+
+    if sink_id.is_empty() {
+        sink_id = find_module_id("module-null-sink", &format!("sink_name={}", config.sink_name))
+            .unwrap_or_default();
+    }
+    if source_id.is_empty() {
+        source_id = find_module_id("module-remap-source", &format!("source_name={}", config.source_name))
+            .unwrap_or_default();
+    }
+
+    if !source_id.is_empty() {
+        unload_pactl_module(&source_id)?;
+    }
+    if !sink_id.is_empty() {
+        unload_pactl_module(&sink_id)?;
+    }
+
+    let _ = fs::remove_file(&config.state_path);
+
+    if source_exists(&config.source_name)? {
+        return Err(anyhow::anyhow!(
+            "virtual mic still exists after remove: {}",
+            config.source_name
+        ));
+    }
+
+    info!(
+        sink = %config.sink_name,
+        source = %config.source_name,
+        "virtual mic removed"
+    );
+    Ok(())
+}
+
+fn read_virtual_mic_state(path: &PathBuf) -> (String, String) {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let mut sink_id = String::new();
+    let mut source_id = String::new();
+    for line in content.lines() {
+        if let Some(value) = line.strip_prefix("SINK_MODULE_ID=") {
+            sink_id = value.trim_matches('"').to_string();
+        } else if let Some(value) = line.strip_prefix("SOURCE_MODULE_ID=") {
+            source_id = value.trim_matches('"').to_string();
+        }
+    }
+    (sink_id, source_id)
+}
+
+fn write_virtual_mic_state(
+    config: &VirtualMicConfig,
+    sink_id: &str,
+    source_id: &str,
+) -> Result<()> {
+    let payload = format!(
+        "SINK_MODULE_ID=\"{sink_id}\"\nSOURCE_MODULE_ID=\"{source_id}\"\nSINK_NAME=\"{}\"\nSOURCE_NAME=\"{}\"\n",
+        config.sink_name, config.source_name
+    );
+    if let Some(parent) = config.state_path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&config.state_path, payload)
+        .map_err(|err| anyhow::anyhow!("write virtual mic state failed: {err}"))?;
+    Ok(())
+}
+
+fn find_module_id(module: &str, needle: &str) -> Option<String> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "modules"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let id = parts.next()?;
+        let name = parts.next()?;
+        if name != module {
+            continue;
+        }
+        let rest = parts.collect::<Vec<_>>().join(" ");
+        if rest.contains(needle) {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
+fn load_pactl_module(module: &str, args: &[String]) -> Result<String> {
+    let mut cmd = Command::new("pactl");
+    cmd.arg("load-module").arg(module);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    let output = cmd.output().map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let message = if stderr.trim().is_empty() {
-            "pactl 查询 sources 失败".to_string()
-        } else {
-            format!("pactl 执行失败: {}", stderr.trim())
-        };
-        return (source_name, false, Some(message));
+        return Err(anyhow::anyhow!(
+            "pactl load-module failed: {}",
+            stderr.trim()
+        ));
+    }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "pactl load-module returned empty module id"
+        ));
+    }
+    Ok(id)
+}
+
+fn unload_pactl_module(id: &str) -> Result<()> {
+    if id.trim().is_empty() {
+        return Ok(());
+    }
+    let output = Command::new("pactl")
+        .args(["unload-module", id])
+        .output()
+        .map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("pactl unload-module failed: {}", stderr.trim()));
+    }
+    Ok(())
+}
+
+fn source_exists(name: &str) -> Result<bool> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+        .map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("pactl 执行失败: {}", stderr.trim()));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         let mut parts = line.split_whitespace();
         let _index = parts.next();
-        let name = parts.next();
-        if name == Some(source_name.as_str()) {
-            return (source_name, true, None);
+        let source = parts.next();
+        if source == Some(name) {
+            return Ok(true);
         }
     }
-    (
-        source_name,
-        false,
-        Some("未检测到虚拟麦克风".to_string()),
-    )
-}
-
-fn virtual_mic_source_name() -> String {
-    let source = env::var("NETMIC_VIRTUAL_MIC_SOURCE_NAME")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    if let Some(name) = source {
-        return name;
-    }
-    let prefix = env::var("NETMIC_VIRTUAL_MIC_PREFIX")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "netmic".to_string());
-    format!("{prefix}_source")
+    Ok(false)
 }
 
 struct ReceiverMetrics {

@@ -14,9 +14,11 @@ use netmic_proto::protocol::{
     ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
 };
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::net::UdpSocket;
 use std::path::PathBuf;
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
@@ -24,6 +26,8 @@ use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 const EVENT_SNAPSHOT: &str = "netmic://snapshot";
 const EVENT_WAVEFORM: &str = "netmic://waveform";
 const SERVER_STATUS_POLL_MS: u64 = 1_000;
+const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
+const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiClientConfig {
@@ -68,6 +72,7 @@ struct UiRuntime {
     virtual_mic_name: String,
     virtual_mic_ready: bool,
     virtual_mic_error: Option<String>,
+    server_status_updated_ms: u64,
     last_error: Option<String>,
 }
 
@@ -126,6 +131,7 @@ struct AppState {
     metrics_loop: bool,
     capture_loop: bool,
     server_monitor_loop: bool,
+    server_process: Option<Child>,
     connected_since: Option<Instant>,
     latest_audio_rms: f32,
     latest_audio_peak: u32,
@@ -153,7 +159,7 @@ fn default_server_config() -> UiServerConfig {
     UiServerConfig {
         listen_port: 43000,
         force_takeover: false,
-        virtual_mic_enabled: false,
+        virtual_mic_enabled: true,
     }
 }
 
@@ -210,6 +216,7 @@ impl AppState {
                 virtual_mic_name: "NetMic Virtual Mic".to_string(),
                 virtual_mic_ready: false,
                 virtual_mic_error: None,
+                server_status_updated_ms: 0,
                 last_error: None,
             },
             devices: UiDevices {
@@ -233,6 +240,7 @@ impl AppState {
             metrics_loop: false,
             capture_loop: false,
             server_monitor_loop: false,
+            server_process: None,
             connected_since: None,
             latest_audio_rms: 0.0,
             latest_audio_peak: 0,
@@ -425,7 +433,38 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
         // 先启动本地采集，确保 macOS 触发权限提示并预览波形。
         ensure_capture_loop(state.inner().clone(), app.clone());
     } else {
+        if let Err(err) = ensure_server_running(state.inner()) {
+            let snapshot = {
+                let mut guard = state.lock().expect("state lock");
+                guard.snapshot.status = "error".to_string();
+                guard.snapshot.status_note = "服务端启动失败".to_string();
+                guard.snapshot.runtime.last_error = Some(err.clone());
+                guard.push_log("error", format!("服务端启动失败：{err}"));
+                guard.snapshot.clone()
+            };
+            emit_snapshot(&app, &snapshot);
+            return snapshot;
+        }
         ensure_server_monitor_loop(state.inner().clone(), app.clone());
+        if let Some(snapshot) = refresh_server_status(state.inner()) {
+            emit_snapshot(&app, &snapshot);
+        }
+        let should_create = {
+            let guard = state.lock().expect("state lock");
+            guard.snapshot.server_config.virtual_mic_enabled
+        };
+        if should_create {
+            let snapshot = apply_server_command(
+                state.inner(),
+                "virtual_mic_create",
+                "已请求创建虚拟麦克风",
+                "虚拟麦克风创建失败",
+            );
+            emit_snapshot(&app, &snapshot);
+            if let Some(snapshot) = refresh_server_status(state.inner()) {
+                emit_snapshot(&app, &snapshot);
+            }
+        }
     }
 
     if mode == "client" {
@@ -458,12 +497,23 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
         });
     }
 
+    let snapshot = {
+        let guard = state.lock().expect("state lock");
+        guard.snapshot.clone()
+    };
+    emit_snapshot(&app, &snapshot);
     snapshot
 }
 
 #[tauri::command]
 fn stop(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     let snapshot = apply_stop(state.inner());
+    emit_snapshot(&app, &snapshot);
+    stop_server_process_if_needed(state.inner());
+    let snapshot = {
+        let guard = state.lock().expect("state lock");
+        guard.snapshot.clone()
+    };
     emit_snapshot(&app, &snapshot);
     snapshot
 }
@@ -517,6 +567,38 @@ fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
     let snapshot = apply_force_disconnect(state.inner());
     emit_snapshot(&app, &snapshot);
+    snapshot
+}
+
+#[tauri::command]
+fn virtual_mic_create(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
+    let snapshot = apply_server_command(
+        state.inner(),
+        "virtual_mic_create",
+        "已请求创建虚拟麦克风",
+        "虚拟麦克风创建失败",
+    );
+    emit_snapshot(&app, &snapshot);
+    if let Some(snapshot) = refresh_server_status(state.inner()) {
+        emit_snapshot(&app, &snapshot);
+        return snapshot;
+    }
+    snapshot
+}
+
+#[tauri::command]
+fn virtual_mic_remove(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
+    let snapshot = apply_server_command(
+        state.inner(),
+        "virtual_mic_remove",
+        "已请求移除虚拟麦克风",
+        "虚拟麦克风移除失败",
+    );
+    emit_snapshot(&app, &snapshot);
+    if let Some(snapshot) = refresh_server_status(state.inner()) {
+        emit_snapshot(&app, &snapshot);
+        return snapshot;
+    }
     snapshot
 }
 
@@ -594,15 +676,11 @@ fn ensure_server_monitor_loop(state: SharedState, app: AppHandle) {
     }
 
     std::thread::spawn(move || loop {
-        let (streaming, mode, server_addr) = {
+        let (streaming, mode) = {
             let guard = state.lock().expect("state lock");
             (
                 guard.streaming,
                 guard.snapshot.mode.clone(),
-                format!(
-                    "127.0.0.1:{}",
-                    guard.snapshot.server_config.listen_port
-                ),
             )
         };
 
@@ -612,21 +690,9 @@ fn ensure_server_monitor_loop(state: SharedState, app: AppHandle) {
             return;
         }
 
-        let response = send_server_status_request(&server_addr);
-        let snapshot = {
-            let mut guard = state.lock().expect("state lock");
-            if !guard.streaming || guard.snapshot.mode != "server" {
-                guard.server_monitor_loop = false;
-                return;
-            }
-            match response {
-                Ok(status) => apply_server_status(&mut guard, status),
-                Err(err) => apply_server_status_error(&mut guard, err),
-            }
-            guard.snapshot.clone()
-        };
-
-        emit_snapshot(&app, &snapshot);
+        if let Some(snapshot) = refresh_server_status(&state) {
+            emit_snapshot(&app, &snapshot);
+        }
         std::thread::sleep(Duration::from_millis(SERVER_STATUS_POLL_MS));
     });
 }
@@ -758,6 +824,7 @@ fn apply_server_status(state: &mut AppState, response: ServerStatusResponse) {
     state.snapshot.runtime.virtual_mic_name = response.virtual_mic_name.clone();
     state.snapshot.runtime.virtual_mic_ready = response.virtual_mic_ready;
     state.snapshot.runtime.virtual_mic_error = response.virtual_mic_error.clone();
+    state.snapshot.runtime.server_status_updated_ms = now_ms();
 
     apply_stats_to_metrics(&response.stats, &mut state.snapshot.metrics);
 }
@@ -770,6 +837,7 @@ fn apply_server_status_error(state: &mut AppState, err: String) {
     state.snapshot.runtime.last_error = Some(err);
     state.snapshot.runtime.virtual_mic_ready = false;
     state.snapshot.runtime.virtual_mic_error = Some("服务端未响应".to_string());
+    state.snapshot.runtime.server_status_updated_ms = now_ms();
     state.reset_metrics();
 }
 
@@ -927,6 +995,181 @@ fn send_server_command(server_addr: &str, action: &str) -> Result<ServerCommandR
         return Err("command response request_id mismatch".to_string());
     }
     Ok(response)
+}
+
+fn refresh_server_status(state: &SharedState) -> Option<UiSnapshot> {
+    let server_addr = {
+        let guard = state.lock().expect("state lock");
+        format!("127.0.0.1:{}", guard.snapshot.server_config.listen_port)
+    };
+    let response = send_server_status_request(&server_addr);
+    let mut guard = state.lock().expect("state lock");
+    let prev_error = guard.snapshot.runtime.last_error.clone();
+    let prev_virtual_mic_ready = guard.snapshot.runtime.virtual_mic_ready;
+    let prev_virtual_mic_error = guard.snapshot.runtime.virtual_mic_error.clone();
+    let prev_virtual_mic_name = guard.snapshot.runtime.virtual_mic_name.clone();
+    let first_fetch = guard.snapshot.runtime.server_status_updated_ms == 0;
+    match response {
+        Ok(status) => {
+            let should_log_status = first_fetch
+                || status.virtual_mic_ready != prev_virtual_mic_ready
+                || status.virtual_mic_error != prev_virtual_mic_error
+                || status.virtual_mic_name != prev_virtual_mic_name;
+            if should_log_status {
+                let error_note = status
+                    .virtual_mic_error
+                    .clone()
+                    .unwrap_or_else(|| "无".to_string());
+                let message = format!(
+                    "服务端状态：虚拟麦={}（{}），错误={}",
+                    if status.virtual_mic_ready {
+                        "已就绪"
+                    } else {
+                        "未就绪"
+                    },
+                    status.virtual_mic_name,
+                    error_note
+                );
+                let level = if status.virtual_mic_ready { "info" } else { "warn" };
+                guard.push_log(level, message.clone());
+                eprintln!("[netmic-ui] {message}");
+            }
+            apply_server_status(&mut guard, status);
+            if first_fetch {
+                let message = format!("已拉取服务端状态（{server_addr}）");
+                guard.push_log("info", message.clone());
+                eprintln!("[netmic-ui] {message}");
+            } else if prev_error.is_some() {
+                let message = format!("服务端状态拉取已恢复（{server_addr}）");
+                guard.push_log("info", message.clone());
+                eprintln!("[netmic-ui] {message}");
+            }
+        }
+        Err(err) => {
+            let should_log = prev_error.as_deref() != Some(&err);
+            apply_server_status_error(&mut guard, err.clone());
+            if should_log {
+                let message = format!("服务端状态拉取失败（{server_addr}）：{err}");
+                guard.push_log("error", message.clone());
+                eprintln!("[netmic-ui] {message}");
+            }
+        }
+    }
+    Some(guard.snapshot.clone())
+}
+
+fn ensure_server_running(state: &SharedState) -> Result<(), String> {
+    let listen_port = {
+        let guard = state.lock().expect("state lock");
+        guard.snapshot.server_config.listen_port
+    };
+    let server_addr = format!("127.0.0.1:{listen_port}");
+    if send_server_status_request(&server_addr).is_ok() {
+        return Ok(());
+    }
+
+    let maybe_child = {
+        let mut guard = state.lock().expect("state lock");
+        if let Some(child) = guard.server_process.as_mut() {
+            if let Ok(Some(_status)) = child.try_wait() {
+                guard.server_process = None;
+            } else {
+                guard.push_log("info", "服务端已在运行中（由 UI 启动）");
+                return Ok(());
+            }
+        }
+        match spawn_server_process(listen_port) {
+            Ok(child) => {
+                guard.push_log("info", "已启动服务端进程");
+                Some(child)
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
+    };
+
+    if let Some(child) = maybe_child {
+        let mut guard = state.lock().expect("state lock");
+        guard.server_process = Some(child);
+    }
+
+    std::thread::sleep(Duration::from_millis(200));
+    if send_server_status_request(&server_addr).is_err() {
+        let mut guard = state.lock().expect("state lock");
+        guard.push_log("warn", "服务端启动中，状态暂未就绪");
+    }
+    Ok(())
+}
+
+fn should_auto_stop_server() -> bool {
+    match env::var(ENV_UI_SERVER_AUTO_STOP) {
+        Ok(raw) => !matches!(raw.as_str(), "0" | "false" | "off" | "no"),
+        Err(_) => true,
+    }
+}
+
+fn stop_server_process_if_needed(state: &SharedState) {
+    let should_stop = should_auto_stop_server();
+    let child = {
+        let mut guard = state.lock().expect("state lock");
+        if guard.snapshot.mode != "server" {
+            return;
+        }
+        if guard.server_process.is_none() {
+            return;
+        }
+        if !should_stop {
+            guard.push_log("info", "已保留服务端进程运行");
+            return;
+        }
+        guard.server_process.take()
+    };
+
+    if let Some(mut child) = child {
+        if let Err(err) = child.kill() {
+            let mut guard = state.lock().expect("state lock");
+            guard.push_log("warn", format!("停止服务端进程失败：{err}"));
+            return;
+        }
+        let _ = child.wait();
+        let mut guard = state.lock().expect("state lock");
+        guard.push_log("info", "已停止服务端进程");
+    }
+}
+
+fn spawn_server_process(listen_port: u16) -> Result<Child, String> {
+    let bin = resolve_server_binary()?;
+    let mut cmd = Command::new(&bin);
+    cmd.env("NETMIC_SERVER_UDP_PORT", listen_port.to_string())
+        .env("NETMIC_SERVER_VIRTUAL_MIC_AUTO_CREATE", "1");
+    cmd.spawn()
+        .map_err(|err| format!("启动服务端失败（{}）：{err}", bin.display()))
+}
+
+fn resolve_server_binary() -> Result<PathBuf, String> {
+    if let Ok(raw) = env::var(ENV_SERVER_BIN) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    if let Ok(current) = env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let name = if cfg!(windows) {
+                "netmic-server.exe"
+            } else {
+                "netmic-server"
+            };
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Ok(PathBuf::from("netmic-server"))
 }
 
 fn apply_handshake_outcome(
@@ -1114,6 +1357,55 @@ fn apply_force_disconnect(state: &SharedState) -> UiSnapshot {
     guard.snapshot.clone()
 }
 
+fn apply_server_command(
+    state: &SharedState,
+    action: &str,
+    ok_message: &str,
+    fail_prefix: &str,
+) -> UiSnapshot {
+    let mode = { state.lock().expect("state lock").snapshot.mode.clone() };
+    if mode != "server" {
+        let mut guard = state.lock().expect("state lock");
+        guard.push_log("warn", "仅服务端模式支持该操作");
+        return guard.snapshot.clone();
+    }
+    if let Err(err) = ensure_server_running(state) {
+        let mut guard = state.lock().expect("state lock");
+        guard.snapshot.runtime.last_error = Some(err.clone());
+        guard.push_log("error", format!("服务端启动失败：{err}"));
+        return guard.snapshot.clone();
+    }
+
+    let server_addr = {
+        let guard = state.lock().expect("state lock");
+        format!("127.0.0.1:{}", guard.snapshot.server_config.listen_port)
+    };
+    let result = send_server_command(&server_addr, action);
+
+    let mut guard = state.lock().expect("state lock");
+    match result {
+        Ok(resp) if resp.ok => {
+            guard.snapshot.runtime.last_error = None;
+            guard.push_log("info", ok_message);
+        }
+        Ok(resp) => {
+            let message = resp
+                .message
+                .unwrap_or_else(|| format!("{fail_prefix}"));
+            guard.snapshot.runtime.last_error = Some(message.clone());
+            guard.push_log("error", message);
+        }
+        Err(err) => {
+            guard.snapshot.runtime.last_error = Some(format!("服务端未响应：{err}"));
+            guard.push_log(
+                "error",
+                format!("服务端未响应（{server_addr}）：{err}"),
+            );
+        }
+    }
+    guard.snapshot.clone()
+}
+
 fn emit_snapshot(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = app.emit(EVENT_SNAPSHOT, snapshot.clone());
 }
@@ -1186,6 +1478,8 @@ fn main() {
             start,
             stop,
             force_disconnect,
+            virtual_mic_create,
+            virtual_mic_remove,
             export_logs,
             clear_logs
         ])

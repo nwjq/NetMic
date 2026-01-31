@@ -20,6 +20,13 @@ export const bindConfigInputs = ({ root, getState, setState, adapter }) => {
         ? await adapter.setClientConfig(nextConfig)
         : await adapter.setServerConfig(nextConfig);
       setState(snapshot);
+
+      if (!isClient && field === "virtual_mic_enabled") {
+        const nextSnapshot = value
+          ? await adapter.createVirtualMic()
+          : await adapter.removeVirtualMic();
+        setState(nextSnapshot);
+      }
     });
   });
 
