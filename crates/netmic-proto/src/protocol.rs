@@ -99,6 +99,58 @@ pub struct StatsSnapshot {
     pub audio_peak: u32,
 }
 
+/// 服务端状态请求（UI/管理端 → Server）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerStatusRequest {
+    /// 请求标识（便于配对响应）。
+    pub request_id: String,
+}
+
+/// 服务端状态响应（Server → UI/管理端）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ServerStatusResponse {
+    /// 请求标识（与请求一致）。
+    pub request_id: String,
+    /// 当前状态（idle/listening/streaming/reconnecting）。
+    pub state: String,
+    /// 当前活跃客户端地址（host:port）。
+    pub active_client: Option<String>,
+    /// 当前活跃连接时长（秒）。
+    pub active_client_seconds: u64,
+    /// 服务端启动后经过的毫秒数。
+    pub uptime_ms: u64,
+    /// 最近一次错误（可选）。
+    pub last_error: Option<String>,
+    /// 虚拟麦克风名称（来自服务端环境）。
+    pub virtual_mic_name: String,
+    /// 虚拟麦克风是否就绪。
+    pub virtual_mic_ready: bool,
+    /// 虚拟麦克风错误（可选）。
+    pub virtual_mic_error: Option<String>,
+    /// 统计快照（复用 StatsSnapshot）。
+    pub stats: StatsSnapshot,
+}
+
+/// 服务端命令请求（UI/管理端 → Server）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerCommandRequest {
+    /// 请求标识（便于配对响应）。
+    pub request_id: String,
+    /// 命令动作（如 force_disconnect）。
+    pub action: String,
+}
+
+/// 服务端命令响应（Server → UI/管理端）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerCommandResponse {
+    /// 请求标识（与请求一致）。
+    pub request_id: String,
+    /// 是否执行成功。
+    pub ok: bool,
+    /// 失败原因（可选）。
+    pub message: Option<String>,
+}
+
 /// 数据面音频帧头（不含 payload）。
 ///
 /// 注意：实际 UDP 负载通常为“帧头 + 编码音频数据”。

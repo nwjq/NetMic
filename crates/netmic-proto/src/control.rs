@@ -9,6 +9,10 @@ pub const CONTROL_TYPE_HANDSHAKE_REQUEST: &str = "handshake_request";
 pub const CONTROL_TYPE_HANDSHAKE_RESPONSE: &str = "handshake_response";
 pub const CONTROL_TYPE_HEARTBEAT: &str = "heartbeat";
 pub const CONTROL_TYPE_STATS: &str = "stats";
+pub const CONTROL_TYPE_SERVER_STATUS_REQUEST: &str = "server_status_request";
+pub const CONTROL_TYPE_SERVER_STATUS_RESPONSE: &str = "server_status_response";
+pub const CONTROL_TYPE_SERVER_COMMAND_REQUEST: &str = "server_command_request";
+pub const CONTROL_TYPE_SERVER_COMMAND_RESPONSE: &str = "server_command_response";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ControlEnvelope<T> {

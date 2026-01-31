@@ -8,6 +8,7 @@
 - 单向音频：Client → Server
 - 单客户端占用：服务端最多 1 个 active sender（冲突返回 BUSY）
 - 控制面与数据面：可复用同端口，但需有明确消息类型
+- UI/管理端控制：复用控制面消息，建议仅接受 loopback
 
 ## Datagram 分流（M1 占位 framing）
 为满足“同端口区分控制面/数据面”的最小能力，当前采用极简 framing：
@@ -99,6 +100,34 @@ Server → Client 为主
 - `estimated_e2e_latency_ms: f32`
 - `audio_rms: f32`（占位，单位/算法后续冻结）
 - `audio_peak: u32`（占位，通常为 PCM16 |sample| 最大值）
+
+### 服务端状态请求：`ServerStatusRequest`
+UI/管理端 → Server（仅建议 loopback）
+- `request_id: String`
+
+### 服务端状态响应：`ServerStatusResponse`
+Server → UI/管理端
+- `request_id: String`
+- `state: String`（idle/listening/streaming/reconnecting）
+- `active_client: Option<String>`（host:port）
+- `active_client_seconds: u64`
+- `uptime_ms: u64`
+- `last_error: Option<String>`
+- `virtual_mic_name: String`
+- `virtual_mic_ready: bool`
+- `virtual_mic_error: Option<String>`
+- `stats: StatsSnapshot`
+
+### 服务端命令：`ServerCommandRequest`
+UI/管理端 → Server（仅建议 loopback）
+- `request_id: String`
+- `action: String`（当前支持：`force_disconnect`）
+
+### 服务端命令响应：`ServerCommandResponse`
+Server → UI/管理端
+- `request_id: String`
+- `ok: bool`
+- `message: Option<String>`
 
 ## 数据面消息（结构）
 

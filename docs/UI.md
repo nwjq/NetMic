@@ -6,7 +6,8 @@
 ## 设计边界
 - UI 仅覆盖 MVP 需求：配置 / 状态 / 日志。
 - 参数安全范围仍以 `MVP.md` 为准；UI 只是输入与提示层。
-- IPC 采用最小命令集：`get_status` / `set_config` / `start` / `stop` / `set_mode`。
+- IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `start` / `stop` / `set_mode`。
+- **独立进程模式**：服务端独立运行，UI 通过 UDP 控制面请求状态/发送命令（默认使用 `listen_port`）。
 
 ## 视图模型（UiSnapshot）
 
@@ -14,7 +15,8 @@
 - `mode: "client" | "server"`
 - `status: "idle" | "connecting" | "listening" | "connected" | "streaming" | "error"`
 - `status_note: String`
-- `config: UiConfig`
+- `client_config: UiClientConfig`
+- `server_config: UiServerConfig`
 - `effective: SessionParams`（`netmic-proto`）
 - `fallbacks: UiFallbackEvent[]`
 - `metrics: UiMetrics`
@@ -22,10 +24,9 @@
 - `devices: UiDevices`
 - `logs: UiLogEntry[]`
 
-### UiConfig（请求参数 + UI 配置）
+### UiClientConfig（客户端配置）
 - `server_addr: String`
 - `server_port: u16`
-- `listen_port: u16`
 - `input_device: String`
 - `codec: String`（opus / pcm16）
 - `sample_rate_hz: u32`
@@ -34,8 +35,11 @@
 - `opus_bitrate_kbps: u32`
 - `jitter_buffer_ms: u32`
 - `auto_reconnect: bool`
-- `force_takeover: bool`（默认 false）
 - `pairing_token: String`（预留）
+
+### UiServerConfig（服务端配置）
+- `listen_port: u16`
+- `force_takeover: bool`（默认 false）
 - `virtual_mic_enabled: bool`
 
 ### UiMetrics（展示指标）
@@ -77,13 +81,28 @@
 ## IPC 命令
 - `get_status() -> UiSnapshot`
 - `set_mode(mode: String) -> UiSnapshot`
-- `set_config(config: UiConfig) -> UiSnapshot`
+- `set_client_config(config: UiClientConfig) -> UiSnapshot`
+- `set_server_config(config: UiServerConfig) -> UiSnapshot`
 - `reset_defaults() -> UiSnapshot`
 - `start() -> UiSnapshot`
 - `stop() -> UiSnapshot`
 - `force_disconnect() -> UiSnapshot`
 - `clear_logs() -> UiSnapshot`
 - `export_logs() -> { ok: bool }`
+
+## 配置持久化
+- UI 会持久化最近一次的模式与配置（client/server 分离）。
+- 启动时优先读取本地配置，再回退到默认值。
+- 默认路径：`BaseDirectory::AppConfig/netmic-ui.json`
+
+## 服务端状态联动（独立进程）
+UI 在 Server 模式下通过 UDP 控制面轮询：
+- 请求：`ServerStatusRequest`
+- 响应：`ServerStatusResponse`
+默认目标地址：`server_addr:listen_port`（建议为 `127.0.0.1` 本地端口）。
+状态页需明确展示：
+- 本地控制端口（= `listen_port`）
+- 虚拟麦克风就绪状态（含错误提示）
 
 ## 事件
 - `netmic://snapshot`：UI 订阅后接收 `UiSnapshot` 推送

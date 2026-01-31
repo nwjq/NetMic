@@ -26,12 +26,14 @@
   - 用途：服务端 UDP 绑定地址（host 或 host:port）；如包含端口则优先使用该端口并忽略 `NETMIC_SERVER_UDP_PORT`。
 - `NETMIC_SERVER_UDP_PORT`
   - 默认值：`43000`
-  - 用途：服务端 UDP 监听端口；若解析失败会回退到默认值。
+  - 用途：服务端 UDP 监听端口；若解析失败会回退到默认值。独立进程模式下 UI 默认使用该端口查询状态。
 - `NETMIC_SERVER_AUDIO_DUMP`
   - 默认值：未设置（关闭）
   - 用途：设置为文件路径时，将收到的 PCM16 payload 追加写入文件，供排障使用。
 
 ## Linux 脚本（自检与虚拟麦）
+
+说明：服务端状态查询虚拟麦克风时同样复用 `NETMIC_VIRTUAL_MIC_*` 环境变量。
 
 - `NETMIC_SMOKE_ID`
   - 默认值：`$$`（当前 shell PID）

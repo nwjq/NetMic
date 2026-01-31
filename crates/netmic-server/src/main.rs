@@ -10,6 +10,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -17,11 +18,16 @@ use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+    CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
+    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
 };
 use netmic_proto::datagram::{
     split_audio_pcm16_with_header, split_datagram, wrap_control_json, DatagramKind,
 };
-use netmic_proto::protocol::{HandshakeRequest, HandshakeResponse, SessionParams};
+use netmic_proto::protocol::{
+    HandshakeRequest, HandshakeResponse, ServerCommandRequest, ServerCommandResponse,
+    ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
+};
 use tracing::{debug, info, warn};
 
 /// 默认 UDP 监听端口（MVP 占位值，后续可统一到配置模块）。
@@ -258,6 +264,9 @@ fn run_receiver_loop(
                                 Ok((header, pcm)) => {
                                     ctx.metrics.on_datagram(kind, pcm);
                                     if let Err(err) = ctx.audio_sink.write_pcm16(pcm) {
+                                        ctx.set_last_error(format!(
+                                            "audio sink write failed: {err}"
+                                        ));
                                         warn!(%err, "audio sink write failed");
                                     }
                                     info!(
@@ -271,6 +280,9 @@ fn run_receiver_loop(
                                     );
                                 }
                                 Err(err) => {
+                                    ctx.set_last_error(format!(
+                                        "audio header decode failed: {err}"
+                                    ));
                                     warn!(%addr, %err, "failed to decode audio header");
                                     ctx.metrics.on_datagram(kind, payload);
                                 }
@@ -328,7 +340,10 @@ impl ConnectionState {
 struct ReceiverContext {
     state: ConnectionState,
     active_client: Option<SocketAddr>,
+    active_since: Option<Instant>,
+    started_at: Instant,
     last_packet_at: Option<Instant>,
+    last_error: Option<String>,
     metrics: ReceiverMetrics,
     audio_sink: Box<dyn AudioSink>,
 }
@@ -339,7 +354,10 @@ impl ReceiverContext {
         Self {
             state: ConnectionState::Idle,
             active_client: None,
+            active_since: None,
+            started_at: now,
             last_packet_at: None,
+            last_error: None,
             metrics: ReceiverMetrics::new(now, sample_rate_hz, channels),
             audio_sink,
         }
@@ -365,6 +383,7 @@ impl ReceiverContext {
             None => {
                 info!(%addr, "lock active client");
                 self.active_client = Some(addr);
+                self.active_since = Some(now);
                 self.last_packet_at = Some(now);
                 self.transition_to(ConnectionState::Active, "lock active client");
                 true
@@ -396,6 +415,7 @@ impl ReceiverContext {
             && self.state == ConnectionState::Reconnecting
         {
             let released = self.active_client.take();
+            self.active_since = None;
             self.last_packet_at = None;
             self.transition_to(
                 ConnectionState::Idle,
@@ -479,8 +499,126 @@ impl ReceiverContext {
             return Some(wrap_control_json(&payload));
         }
 
+        if msg_type.as_str() == CONTROL_TYPE_SERVER_STATUS_REQUEST {
+            let request: ServerStatusRequest = match decode_control_payload(payload_value) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(%addr, %err, "invalid server status request payload");
+                    return None;
+                }
+            };
+            if !addr.ip().is_loopback() {
+                warn!(%addr, "reject server status request from non-loopback address");
+                return None;
+            }
+            let response = self.build_status_response(request.request_id, now);
+            let payload = match encode_control_message(CONTROL_TYPE_SERVER_STATUS_RESPONSE, &response)
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(%addr, %err, "failed to encode server status response");
+                    return None;
+                }
+            };
+            return Some(wrap_control_json(&payload));
+        }
+
+        if msg_type.as_str() == CONTROL_TYPE_SERVER_COMMAND_REQUEST {
+            let request: ServerCommandRequest = match decode_control_payload(payload_value) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(%addr, %err, "invalid server command request payload");
+                    return None;
+                }
+            };
+            if !addr.ip().is_loopback() {
+                warn!(%addr, "reject server command from non-loopback address");
+                return None;
+            }
+            let response = self.handle_server_command(request, now);
+            let payload = match encode_control_message(CONTROL_TYPE_SERVER_COMMAND_RESPONSE, &response)
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(%addr, %err, "failed to encode server command response");
+                    return None;
+                }
+            };
+            return Some(wrap_control_json(&payload));
+        }
+
         info!(%addr, msg_type, "received control json payload");
         None
+    }
+
+    fn handle_server_command(
+        &mut self,
+        request: ServerCommandRequest,
+        now: Instant,
+    ) -> ServerCommandResponse {
+        let action = request.action.as_str();
+        match action {
+            "force_disconnect" => {
+                let had_client = self.active_client.take();
+                self.active_since = None;
+                self.last_packet_at = None;
+                self.transition_to(ConnectionState::Idle, "force disconnect");
+                if let Some(addr) = had_client {
+                    info!(%addr, "force disconnected active client");
+                }
+                ServerCommandResponse {
+                    request_id: request.request_id,
+                    ok: true,
+                    message: None,
+                }
+            }
+            other => ServerCommandResponse {
+                request_id: request.request_id,
+                ok: false,
+                message: Some(format!("unsupported command: {other}")),
+            },
+        }
+    }
+
+    fn build_status_response(&mut self, request_id: String, now: Instant) -> ServerStatusResponse {
+        let state = self.status_label();
+        let active_client = self.active_client.map(|addr| addr.to_string());
+        let active_client_seconds = self
+            .active_since
+            .map(|since| now.saturating_duration_since(since).as_secs())
+            .unwrap_or(0);
+        let uptime_ms = now
+            .saturating_duration_since(self.started_at)
+            .as_millis() as u64;
+        let (virtual_mic_name, virtual_mic_ready, virtual_mic_error) = virtual_mic_status();
+        let stats = self.metrics.build_stats_snapshot();
+        ServerStatusResponse {
+            request_id,
+            state,
+            active_client,
+            active_client_seconds,
+            uptime_ms,
+            last_error: self.last_error.clone(),
+            virtual_mic_name,
+            virtual_mic_ready,
+            virtual_mic_error,
+            stats,
+        }
+    }
+
+    fn status_label(&self) -> String {
+        if self.active_client.is_none() {
+            return "listening".to_string();
+        }
+        match self.state {
+            ConnectionState::Active => "streaming".to_string(),
+            ConnectionState::Reconnecting => "reconnecting".to_string(),
+            ConnectionState::Idle => "listening".to_string(),
+        }
+    }
+
+    fn set_last_error(&mut self, err: impl Into<String>) {
+        self.last_error = Some(err.into());
     }
 }
 
@@ -545,6 +683,62 @@ fn audio_sink_from_env() -> Result<Box<dyn AudioSink>> {
     let sink = FileDumpSink::new(path)?;
     info!(path = %sink.path.display(), "NETMIC_SERVER_AUDIO_DUMP enabled");
     Ok(Box::new(sink))
+}
+
+fn virtual_mic_status() -> (String, bool, Option<String>) {
+    let source_name = virtual_mic_source_name();
+    let output = Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => {
+            return (
+                source_name,
+                false,
+                Some(format!("pactl 不可用: {err}")),
+            )
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let message = if stderr.trim().is_empty() {
+            "pactl 查询 sources 失败".to_string()
+        } else {
+            format!("pactl 执行失败: {}", stderr.trim())
+        };
+        return (source_name, false, Some(message));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let _index = parts.next();
+        let name = parts.next();
+        if name == Some(source_name.as_str()) {
+            return (source_name, true, None);
+        }
+    }
+    (
+        source_name,
+        false,
+        Some("未检测到虚拟麦克风".to_string()),
+    )
+}
+
+fn virtual_mic_source_name() -> String {
+    let source = env::var("NETMIC_VIRTUAL_MIC_SOURCE_NAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(name) = source {
+        return name;
+    }
+    let prefix = env::var("NETMIC_VIRTUAL_MIC_PREFIX")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "netmic".to_string());
+    format!("{prefix}_source")
 }
 
 struct ReceiverMetrics {
@@ -722,5 +916,20 @@ impl ReceiverMetrics {
         (self.buffer_depth_frames as u64)
             .saturating_mul(1000)
             .saturating_div(sample_rate_hz)
+    }
+
+    fn build_stats_snapshot(&mut self) -> StatsSnapshot {
+        let (audio_rms, audio_peak) = self.take_audio_level_snapshot();
+        let buffer_depth_ms = self.buffer_depth_ms();
+        StatsSnapshot {
+            packets_received: self.audio_packets,
+            packets_lost: 0,
+            buffer_depth_frames: self.buffer_depth_frames as u64,
+            buffer_depth_ms,
+            jitter_buffer_depth_ms: buffer_depth_ms as f32,
+            estimated_e2e_latency_ms: buffer_depth_ms as f32,
+            audio_rms,
+            audio_peak,
+        }
     }
 }
