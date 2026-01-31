@@ -2,8 +2,14 @@
 
 use netmic_client::{list_input_devices, AudioPipeline, CaptureError};
 use netmic_proto::config::normalize_session_params;
-use netmic_proto::protocol::SessionParams;
+use netmic_proto::control::{
+    decode_control_message, decode_control_payload, encode_control_message,
+    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+};
+use netmic_proto::datagram::{split_datagram, wrap_control_json, DatagramKind};
+use netmic_proto::protocol::{HandshakeRequest, HandshakeResponse, SessionParams};
 use serde::{Deserialize, Serialize};
+use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
@@ -48,6 +54,7 @@ struct UiRuntime {
     reconnect_attempts: u32,
     mic_permission: String,
     virtual_mic_name: String,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +150,7 @@ impl Default for AppState {
                 reconnect_attempts: 0,
                 mic_permission: "未知".to_string(),
                 virtual_mic_name: "NetMic Virtual Mic".to_string(),
+                last_error: None,
             },
             devices: UiDevices {
                 input: vec!["系统默认".to_string()],
@@ -267,41 +275,14 @@ fn get_status(state: State<SharedState>) -> UiSnapshot {
 
 #[tauri::command]
 fn set_mode(state: State<SharedState>, app: AppHandle, mode: String) -> UiSnapshot {
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        guard.snapshot.mode = if mode == "server" { "server" } else { "client" }.to_string();
-        guard.snapshot.status = "idle".to_string();
-        guard.snapshot.status_note = "准备就绪".to_string();
-        guard.snapshot.runtime.peer_addr = None;
-        guard.snapshot.runtime.connected_seconds = 0;
-        guard.snapshot.runtime.mic_permission = if mode == "server" {
-            "不适用".to_string()
-        } else {
-            "未知".to_string()
-        };
-        guard.streaming = false;
-        guard.connected_since = None;
-        guard.latest_audio_rms = 0.0;
-        guard.latest_audio_peak = 0;
-        guard.reset_metrics();
-        guard.refresh_devices();
-        let mode_label = guard.snapshot.mode.clone();
-        guard.push_log("info", format!("切换到 {} 模式", mode_label));
-        guard.snapshot.clone()
-    };
+    let snapshot = apply_set_mode(state.inner(), &mode);
     emit_snapshot(&app, &snapshot);
     snapshot
 }
 
 #[tauri::command]
 fn set_config(state: State<SharedState>, app: AppHandle, config: UiConfig) -> UiSnapshot {
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        guard.snapshot.config = UiConfig { channels: 1, ..config };
-        guard.update_effective();
-        guard.push_log("info", "已更新配置");
-        guard.snapshot.clone()
-    };
+    let snapshot = apply_set_config(state.inner(), config);
     emit_snapshot(&app, &snapshot);
     snapshot
 }
@@ -319,30 +300,13 @@ fn reset_defaults(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
 #[tauri::command]
 fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
-    let mode = {
-        let guard = state.lock().expect("state lock");
-        guard.snapshot.mode.clone()
-    };
-
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        guard.streaming = true;
-        guard.connected_since = None;
-        guard.snapshot.runtime.connected_seconds = 0;
-        if mode == "client" {
-            guard.snapshot.status = "connecting".to_string();
-            guard.snapshot.status_note = "正在建立连接".to_string();
-        } else {
-            guard.snapshot.status = "listening".to_string();
-            guard.snapshot.status_note = "等待客户端连接".to_string();
-        }
-        guard.push_log("info", "开始运行");
-        guard.snapshot.clone()
-    };
+    let mode = { state.lock().expect("state lock").snapshot.mode.clone() };
+    let snapshot = apply_start(state.inner());
 
     emit_snapshot(&app, &snapshot);
     ensure_metrics_loop(state.inner().clone(), app.clone());
     if mode == "client" {
+        // 先启动本地采集，确保 macOS 触发权限提示并预览波形。
         ensure_capture_loop(state.inner().clone(), app.clone());
     }
 
@@ -350,21 +314,28 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
         let state = state.inner().clone();
         let app = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(800));
-            let snapshot = {
-                let mut guard = state.lock().expect("state lock");
-                if !guard.streaming {
-                    return;
-                }
-                guard.snapshot.status = "streaming".to_string();
-                guard.snapshot.status_note = "推流中（模拟）".to_string();
-                guard.snapshot.runtime.peer_addr = Some(format!(
+            let (server_addr, request) = {
+                let guard = state.lock().expect("state lock");
+                let server_addr = format!(
                     "{}:{}",
                     guard.snapshot.config.server_addr, guard.snapshot.config.server_port
-                ));
-                guard.push_log("info", "已进入推流状态");
-                guard.snapshot.clone()
+                );
+                let request = build_handshake_request(&guard.snapshot.config);
+                (server_addr, request)
             };
+
+            let response = perform_handshake(&server_addr, &request);
+            let (snapshot, accepted) = {
+                let mut guard = state.lock().expect("state lock");
+                if !guard.streaming || guard.snapshot.mode != "client" {
+                    return;
+                }
+                let accepted = apply_handshake_outcome(&mut guard, &server_addr, response);
+                (guard.snapshot.clone(), accepted)
+            };
+            if accepted {
+                ensure_capture_loop(state.clone(), app.clone());
+            }
             emit_snapshot(&app, &snapshot);
         });
     }
@@ -374,37 +345,14 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
 #[tauri::command]
 fn stop(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        guard.streaming = false;
-        guard.snapshot.status = "idle".to_string();
-        guard.snapshot.status_note = "已停止".to_string();
-        guard.snapshot.runtime.peer_addr = None;
-        guard.snapshot.runtime.connected_seconds = 0;
-        guard.connected_since = None;
-        guard.latest_audio_rms = 0.0;
-        guard.latest_audio_peak = 0;
-        if guard.snapshot.mode == "client" {
-            guard.snapshot.runtime.mic_permission = "未知".to_string();
-        }
-        guard.reset_metrics();
-        guard.push_log("warn", "已停止运行");
-        guard.snapshot.clone()
-    };
+    let snapshot = apply_stop(state.inner());
     emit_snapshot(&app, &snapshot);
     snapshot
 }
 
 #[tauri::command]
 fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
-    let snapshot = {
-        let mut guard = state.lock().expect("state lock");
-        guard.snapshot.runtime.peer_addr = None;
-        guard.snapshot.status = "listening".to_string();
-        guard.snapshot.status_note = "已断开客户端".to_string();
-        guard.push_log("warn", "已强制断开客户端");
-        guard.snapshot.clone()
-    };
+    let snapshot = apply_force_disconnect(state.inner());
     emit_snapshot(&app, &snapshot);
     snapshot
 }
@@ -508,6 +456,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                     guard.connected_since = None;
                     guard.latest_audio_rms = 0.0;
                     guard.latest_audio_peak = 0;
+                    guard.snapshot.runtime.last_error = Some(format!("采集初始化失败：{err}"));
                     guard.snapshot.runtime.mic_permission =
                         permission_label_from_error(&err).to_string();
                     guard.push_log("error", format!("采集初始化失败：{err}"));
@@ -544,6 +493,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                         guard.connected_since = None;
                         guard.latest_audio_rms = 0.0;
                         guard.latest_audio_peak = 0;
+                        guard.snapshot.runtime.last_error = Some(format!("采集失败：{err}"));
                         guard.push_log("error", format!("采集失败：{err}"));
                         guard.capture_loop = false;
                         guard.snapshot.clone()
@@ -573,6 +523,208 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
             }
         }
     });
+}
+
+fn build_handshake_request(config: &UiConfig) -> HandshakeRequest {
+    let requested = SessionParams {
+        codec: config.codec.clone(),
+        sample_rate_hz: config.sample_rate_hz,
+        channels: config.channels,
+        chunk_ms: config.chunk_ms,
+        opus_bitrate_kbps: if config.codec == "opus" {
+            Some(config.opus_bitrate_kbps)
+        } else {
+            None
+        },
+        jitter_buffer_ms: config.jitter_buffer_ms,
+    };
+    HandshakeRequest {
+        session_id: format!("session-{}", now_ms()),
+        client_name: "netmic-ui".to_string(),
+        requested,
+        token: if config.pairing_token.trim().is_empty() {
+            None
+        } else {
+            Some(config.pairing_token.clone())
+        },
+    }
+}
+
+fn perform_handshake(
+    server_addr: &str,
+    request: &HandshakeRequest,
+) -> Result<HandshakeResponse, String> {
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(1_200)))
+        .map_err(|err| format!("set udp timeout failed: {err}"))?;
+
+    let payload = encode_control_message(CONTROL_TYPE_HANDSHAKE_REQUEST, request)
+        .map_err(|err| format!("encode handshake request failed: {err}"))?;
+    let datagram = wrap_control_json(&payload);
+    socket
+        .send_to(&datagram, server_addr)
+        .map_err(|err| format!("send handshake request failed: {err}"))?;
+
+    let mut buf = [0_u8; 2048];
+    let (len, _addr) = socket
+        .recv_from(&mut buf)
+        .map_err(|err| format!("recv handshake response failed: {err}"))?;
+    let (kind, payload) = split_datagram(&buf[..len]).ok_or("invalid handshake datagram")?;
+    if kind != DatagramKind::ControlJson {
+        return Err("unexpected handshake response kind".to_string());
+    }
+    let (msg_type, payload_value) =
+        decode_control_message(payload).map_err(|err| format!("{err}"))?;
+    if msg_type.as_str() != CONTROL_TYPE_HANDSHAKE_RESPONSE {
+        return Err(format!("unexpected handshake response type: {msg_type}"));
+    }
+    let response: HandshakeResponse =
+        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
+    if response.session_id != request.session_id {
+        return Err("handshake response session mismatch".to_string());
+    }
+    Ok(response)
+}
+
+fn apply_handshake_outcome(
+    state: &mut AppState,
+    server_addr: &str,
+    response: Result<HandshakeResponse, String>,
+) -> bool {
+    match response {
+        Ok(response) if response.accepted && !response.busy => {
+            state.snapshot.effective = response.effective;
+            state.snapshot.status = "streaming".to_string();
+            state.snapshot.status_note = "推流中（握手成功）".to_string();
+            state.snapshot.runtime.peer_addr = Some(server_addr.to_string());
+            state.snapshot.runtime.last_error = None;
+            state.push_log("info", "握手成功，已进入推流状态");
+            true
+        }
+        Ok(response) if response.busy => {
+            state.streaming = false;
+            state.snapshot.status = "error".to_string();
+            state.snapshot.status_note = "握手失败：服务端忙".to_string();
+            state.snapshot.runtime.peer_addr = None;
+            state.snapshot.runtime.connected_seconds = 0;
+            state.snapshot.runtime.last_error = Some("握手失败：服务端忙".to_string());
+            state.connected_since = None;
+            state.reset_metrics();
+            state.push_log("warn", "握手失败：服务端忙");
+            false
+        }
+        Ok(response) => {
+            state.streaming = false;
+            state.snapshot.status = "error".to_string();
+            let reason = response
+                .reason
+                .filter(|item| !item.trim().is_empty())
+                .unwrap_or_else(|| "被拒绝".to_string());
+            state.snapshot.status_note = format!("握手失败：{reason}");
+            state.snapshot.runtime.peer_addr = None;
+            state.snapshot.runtime.connected_seconds = 0;
+            state.snapshot.runtime.last_error = Some(format!("握手失败：{reason}"));
+            state.connected_since = None;
+            state.reset_metrics();
+            state.push_log("error", format!("握手失败：{reason}"));
+            false
+        }
+        Err(err) => {
+            state.streaming = false;
+            state.snapshot.status = "error".to_string();
+            state.snapshot.status_note = format!("握手失败：{err}");
+            state.snapshot.runtime.peer_addr = None;
+            state.snapshot.runtime.connected_seconds = 0;
+            state.snapshot.runtime.last_error = Some(format!("握手失败：{err}"));
+            state.connected_since = None;
+            state.reset_metrics();
+            state.push_log("error", format!("握手失败：{err}"));
+            false
+        }
+    }
+}
+
+fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    guard.snapshot.mode = if mode == "server" { "server" } else { "client" }.to_string();
+    guard.snapshot.status = "idle".to_string();
+    guard.snapshot.status_note = "准备就绪".to_string();
+    guard.snapshot.runtime.peer_addr = None;
+    guard.snapshot.runtime.connected_seconds = 0;
+    guard.snapshot.runtime.mic_permission = if mode == "server" {
+        "不适用".to_string()
+    } else {
+        "未知".to_string()
+    };
+    guard.snapshot.runtime.last_error = None;
+    guard.streaming = false;
+    guard.connected_since = None;
+    guard.latest_audio_rms = 0.0;
+    guard.latest_audio_peak = 0;
+    guard.reset_metrics();
+    guard.refresh_devices();
+    let mode_label = guard.snapshot.mode.clone();
+    guard.push_log("info", format!("切换到 {} 模式", mode_label));
+    guard.snapshot.clone()
+}
+
+fn apply_set_config(state: &SharedState, config: UiConfig) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    guard.snapshot.config = UiConfig {
+        channels: 1,
+        ..config
+    };
+    guard.update_effective();
+    guard.push_log("info", "已更新配置");
+    guard.snapshot.clone()
+}
+
+fn apply_start(state: &SharedState) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    let mode = guard.snapshot.mode.clone();
+    guard.streaming = true;
+    guard.connected_since = None;
+    guard.snapshot.runtime.connected_seconds = 0;
+    guard.snapshot.runtime.last_error = None;
+    if mode == "client" {
+        guard.snapshot.status = "connecting".to_string();
+        guard.snapshot.status_note = "正在建立连接".to_string();
+    } else {
+        guard.snapshot.status = "listening".to_string();
+        guard.snapshot.status_note = "等待客户端连接".to_string();
+    }
+    guard.push_log("info", "开始运行");
+    guard.snapshot.clone()
+}
+
+fn apply_stop(state: &SharedState) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    guard.streaming = false;
+    guard.snapshot.status = "idle".to_string();
+    guard.snapshot.status_note = "已停止".to_string();
+    guard.snapshot.runtime.peer_addr = None;
+    guard.snapshot.runtime.connected_seconds = 0;
+    guard.connected_since = None;
+    guard.latest_audio_rms = 0.0;
+    guard.latest_audio_peak = 0;
+    if guard.snapshot.mode == "client" {
+        guard.snapshot.runtime.mic_permission = "未知".to_string();
+    }
+    guard.snapshot.runtime.last_error = None;
+    guard.reset_metrics();
+    guard.push_log("warn", "已停止运行");
+    guard.snapshot.clone()
+}
+
+fn apply_force_disconnect(state: &SharedState) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    guard.snapshot.runtime.peer_addr = None;
+    guard.snapshot.status = "listening".to_string();
+    guard.snapshot.status_note = "已断开客户端".to_string();
+    guard.push_log("warn", "已强制断开客户端");
+    guard.snapshot.clone()
 }
 
 fn emit_snapshot(app: &AppHandle, snapshot: &UiSnapshot) {
@@ -648,4 +800,289 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_state() -> SharedState {
+        Arc::new(Mutex::new(AppState::default()))
+    }
+
+    #[test]
+    fn ipc_set_mode_resets_state_and_permissions() {
+        let state = fresh_state();
+        {
+            let mut guard = state.lock().expect("state lock");
+            guard.snapshot.runtime.peer_addr = Some("127.0.0.1:1".to_string());
+            guard.snapshot.runtime.connected_seconds = 42;
+            guard.streaming = true;
+        }
+        let snapshot = apply_set_mode(&state, "server");
+        assert_eq!(snapshot.mode, "server");
+        assert_eq!(snapshot.status, "idle");
+        assert_eq!(snapshot.status_note, "准备就绪");
+        assert_eq!(snapshot.runtime.peer_addr, None);
+        assert_eq!(snapshot.runtime.connected_seconds, 0);
+        assert_eq!(snapshot.runtime.mic_permission, "不适用");
+
+        let snapshot = apply_set_mode(&state, "client");
+        assert_eq!(snapshot.mode, "client");
+        assert_eq!(snapshot.runtime.mic_permission, "未知");
+    }
+
+    #[test]
+    fn ipc_set_config_updates_effective_and_fallbacks() {
+        let state = fresh_state();
+        let config = UiConfig {
+            server_addr: "127.0.0.1".to_string(),
+            server_port: 43000,
+            listen_port: 43000,
+            input_device: "系统默认".to_string(),
+            codec: "opus".to_string(),
+            sample_rate_hz: 12_345,
+            channels: 2,
+            chunk_ms: 15,
+            opus_bitrate_kbps: 999,
+            jitter_buffer_ms: 999,
+            auto_reconnect: true,
+            force_takeover: false,
+            pairing_token: "".to_string(),
+            virtual_mic_enabled: false,
+        };
+        let snapshot = apply_set_config(&state, config);
+        assert!(snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "sample_rate_hz"));
+        assert!(snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "chunk_ms"));
+        assert!(snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "opus_bitrate_kbps"));
+        assert!(snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "jitter_buffer_ms"));
+        assert_eq!(snapshot.effective.channels, 1);
+    }
+
+    #[test]
+    fn ipc_start_sets_status_by_mode() {
+        let state = fresh_state();
+        let snapshot = apply_set_mode(&state, "client");
+        assert_eq!(snapshot.mode, "client");
+        let snapshot = apply_start(&state);
+        assert_eq!(snapshot.status, "connecting");
+        assert_eq!(snapshot.status_note, "正在建立连接");
+
+        let _snapshot = apply_set_mode(&state, "server");
+        let snapshot = apply_start(&state);
+        assert_eq!(snapshot.status, "listening");
+        assert_eq!(snapshot.status_note, "等待客户端连接");
+    }
+
+    #[test]
+    fn ipc_stop_clears_runtime_fields() {
+        let state = fresh_state();
+        let _ = apply_set_mode(&state, "client");
+        let _ = apply_start(&state);
+        {
+            let mut guard = state.lock().expect("state lock");
+            guard.snapshot.runtime.peer_addr = Some("127.0.0.1:9".to_string());
+            guard.snapshot.runtime.connected_seconds = 9;
+            guard.latest_audio_rms = 0.9;
+            guard.latest_audio_peak = 123;
+        }
+        let snapshot = apply_stop(&state);
+        assert_eq!(snapshot.status, "idle");
+        assert_eq!(snapshot.runtime.peer_addr, None);
+        assert_eq!(snapshot.runtime.connected_seconds, 0);
+        assert_eq!(snapshot.runtime.mic_permission, "未知");
+    }
+
+    #[test]
+    fn ipc_force_disconnect_marks_listening() {
+        let state = fresh_state();
+        let _ = apply_set_mode(&state, "server");
+        {
+            let mut guard = state.lock().expect("state lock");
+            guard.snapshot.runtime.peer_addr = Some("127.0.0.1:9".to_string());
+        }
+        let snapshot = apply_force_disconnect(&state);
+        assert_eq!(snapshot.status, "listening");
+        assert_eq!(snapshot.status_note, "已断开客户端");
+        assert_eq!(snapshot.runtime.peer_addr, None);
+    }
+
+    #[test]
+    fn build_waveform_returns_fixed_length_for_empty_input() {
+        let (points, rms, peak) = build_waveform(&[], 128);
+        assert_eq!(points.len(), 128);
+        assert!(points.iter().all(|value| *value == 0.0));
+        assert_eq!(rms, 0.0);
+        assert_eq!(peak, 0);
+    }
+
+    #[test]
+    fn build_waveform_reports_rms_and_peak() {
+        let samples = vec![0_i16, i16::MAX];
+        let (points, rms, peak) = build_waveform(&samples, 2);
+        assert_eq!(points.len(), 2);
+        assert_eq!(peak, i16::MAX as u32);
+        assert!((rms - 0.707).abs() < 0.02);
+    }
+
+    #[test]
+    fn permission_label_maps_errors() {
+        assert_eq!(
+            permission_label_from_error(&CaptureError::DeviceUnavailable("x".into())),
+            "不可用"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::DeviceListFailed("x".into())),
+            "不可用"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::StreamConfigUnavailable("x".into())),
+            "未授权"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::StreamBuildFailed("x".into())),
+            "未授权"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::StreamPlayFailed("x".into())),
+            "未授权"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::BufferTimeout {
+                wanted: 1,
+                available: 0
+            }),
+            "未知"
+        );
+        assert_eq!(
+            permission_label_from_error(&CaptureError::ResampleFailed("x".into())),
+            "未知"
+        );
+    }
+
+    #[test]
+    fn update_effective_records_fallbacks() {
+        let mut state = AppState::default();
+        state.snapshot.config.codec = "opus".to_string();
+        state.snapshot.config.sample_rate_hz = 12_345;
+        state.snapshot.config.chunk_ms = 15;
+        state.snapshot.config.opus_bitrate_kbps = 999;
+        state.snapshot.config.jitter_buffer_ms = 999;
+
+        state.update_effective();
+
+        assert!(state
+            .snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "sample_rate_hz"));
+        assert!(state
+            .snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "chunk_ms"));
+        assert!(state
+            .snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "opus_bitrate_kbps"));
+        assert!(state
+            .snapshot
+            .fallbacks
+            .iter()
+            .any(|item| item.field == "jitter_buffer_ms"));
+
+        let defaults = SessionParams::mvp_default();
+        assert_eq!(
+            state.snapshot.effective.sample_rate_hz,
+            defaults.sample_rate_hz
+        );
+        assert_eq!(state.snapshot.effective.chunk_ms, defaults.chunk_ms);
+        assert_eq!(
+            state.snapshot.effective.opus_bitrate_kbps,
+            defaults.opus_bitrate_kbps
+        );
+        assert_eq!(
+            state.snapshot.effective.jitter_buffer_ms,
+            defaults.jitter_buffer_ms
+        );
+    }
+
+    #[test]
+    fn handshake_outcome_updates_status_on_success() {
+        let mut state = AppState::default();
+        let response = HandshakeResponse {
+            session_id: "session-1".to_string(),
+            accepted: true,
+            reason: None,
+            effective: SessionParams::mvp_default(),
+            busy: false,
+        };
+        let accepted = apply_handshake_outcome(&mut state, "127.0.0.1:43000", Ok(response));
+        assert!(accepted);
+        assert_eq!(state.snapshot.status, "streaming");
+        assert_eq!(state.snapshot.status_note, "推流中（握手成功）");
+        assert_eq!(
+            state.snapshot.runtime.peer_addr,
+            Some("127.0.0.1:43000".to_string())
+        );
+    }
+
+    #[test]
+    fn handshake_outcome_marks_busy_as_error() {
+        let mut state = AppState::default();
+        state.streaming = true;
+        let response = HandshakeResponse {
+            session_id: "session-1".to_string(),
+            accepted: false,
+            reason: Some("busy".to_string()),
+            effective: SessionParams::mvp_default(),
+            busy: true,
+        };
+        let accepted = apply_handshake_outcome(&mut state, "127.0.0.1:43000", Ok(response));
+        assert!(!accepted);
+        assert_eq!(state.snapshot.status, "error");
+        assert_eq!(state.snapshot.status_note, "握手失败：服务端忙");
+        assert_eq!(state.streaming, false);
+    }
+
+    #[test]
+    fn handshake_outcome_reports_reject_reason() {
+        let mut state = AppState::default();
+        state.streaming = true;
+        let response = HandshakeResponse {
+            session_id: "session-1".to_string(),
+            accepted: false,
+            reason: Some("unauthorized".to_string()),
+            effective: SessionParams::mvp_default(),
+            busy: false,
+        };
+        let accepted = apply_handshake_outcome(&mut state, "127.0.0.1:43000", Ok(response));
+        assert!(!accepted);
+        assert_eq!(state.snapshot.status, "error");
+        assert!(state.snapshot.status_note.contains("unauthorized"));
+    }
+
+    #[test]
+    fn handshake_outcome_reports_transport_error() {
+        let mut state = AppState::default();
+        state.streaming = true;
+        let accepted =
+            apply_handshake_outcome(&mut state, "127.0.0.1:43000", Err("timeout".to_string()));
+        assert!(!accepted);
+        assert_eq!(state.snapshot.status, "error");
+        assert!(state.snapshot.status_note.contains("timeout"));
+    }
 }

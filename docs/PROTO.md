@@ -53,6 +53,21 @@ kind 定义（代码位置：`crates/netmic-proto/src/datagram.rs`）：
 
 ## 控制面消息（结构）
 
+### JSON envelope（MVP 约定）
+控制面统一使用 JSON 包裹：
+- `type`: 消息类型（字符串）
+- `payload`: 对应结构体
+
+示例（握手请求）：
+```json
+{
+  "type": "handshake_request",
+  "payload": { ...HandshakeRequest }
+}
+```
+
+当前实现对齐位置：`netmic-proto/src/control.rs`（`encode_control_message` / `decode_control_message`）。
+
 ### 握手请求：`HandshakeRequest`
 Client → Server
 - `session_id: String`
@@ -93,6 +108,13 @@ Server → Client 为主
 - `timestamp_ms: u64`
 - `frame_samples: u32`
 
-当前状态：
-- 已定义结构体，但尚未冻结 wire format（编码方式/帧头布局/校验策略）。
-- 后续若新增 datagram 编码/解码规则，需同步更新本文件与 `MVP.md` 的相关约束说明。
+### PCM16 音频 datagram（MVP 现行）
+kind=1 的 payload 结构（小端）：
+```
+[u32 header_len][header_json][pcm16_bytes]
+```
+- `header_len`: `AudioFrameHeader` 的 JSON 字节长度（u32 little-endian）
+- `header_json`: `AudioFrameHeader` 的 JSON 编码
+- `pcm16_bytes`: PCM16 原始字节流（小端）
+
+当前实现位置：`netmic-proto/src/datagram.rs`（`wrap_audio_pcm16_with_header` / `split_audio_pcm16_with_header`）。

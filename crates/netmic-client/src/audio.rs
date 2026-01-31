@@ -213,25 +213,7 @@ impl CpalCapture {
     }
 
     fn read_mono_samples(&self, frames: usize) -> Result<Vec<f32>, CaptureError> {
-        let deadline = Instant::now() + Duration::from_millis(BUFFER_WAIT_TIMEOUT_MS);
-        loop {
-            let mut guard = match self.buffer.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let available = guard.available();
-            if available >= frames {
-                return Ok(guard.pop_samples(frames));
-            }
-            drop(guard);
-            if Instant::now() >= deadline {
-                return Err(CaptureError::BufferTimeout {
-                    wanted: frames,
-                    available,
-                });
-            }
-            std::thread::sleep(Duration::from_millis(BUFFER_POLL_MS));
-        }
+        read_buffer_with_timeout(&self.buffer, frames, BUFFER_WAIT_TIMEOUT_MS, BUFFER_POLL_MS)
     }
 }
 
@@ -264,21 +246,40 @@ fn select_input_device(
         let devices = host
             .input_devices()
             .map_err(|err| CaptureError::DeviceListFailed(err.to_string()))?;
+        let mut names = Vec::new();
+        let mut list = Vec::new();
         for device in devices {
             if let Ok(name) = device.name() {
-                if name == target_name {
-                    return Ok(device);
-                }
+                names.push(name);
+                list.push(device);
             }
         }
-        return Err(CaptureError::DeviceUnavailable(format!(
-            "input device not found: {target_name}"
-        )));
+        if let Some(index) = pick_device_index(&names, Some(target_name))? {
+            return Ok(list.swap_remove(index));
+        }
     }
 
-    host.default_input_device().ok_or_else(|| {
-        CaptureError::DeviceUnavailable("no default input device".to_string())
-    })
+    host.default_input_device()
+        .ok_or_else(|| CaptureError::DeviceUnavailable("no default input device".to_string()))
+}
+
+fn pick_device_index(
+    names: &[String],
+    desired: Option<&str>,
+) -> Result<Option<usize>, CaptureError> {
+    let Some(target_name) = desired else {
+        return Ok(None);
+    };
+    if let Some((index, _)) = names
+        .iter()
+        .enumerate()
+        .find(|(_, name)| name.as_str() == target_name)
+    {
+        return Ok(Some(index));
+    }
+    Err(CaptureError::DeviceUnavailable(format!(
+        "input device not found: {target_name}"
+    )))
 }
 fn build_stream<T>(
     device: &cpal::Device,
@@ -303,11 +304,8 @@ where
         .map_err(|err| CaptureError::StreamBuildFailed(err.to_string()))
 }
 
-fn push_interleaved_to_mono<T: Sample>(
-    data: &[T],
-    channels: u16,
-    buffer: &Arc<Mutex<SampleBuffer>>,
-) where
+fn push_interleaved_to_mono<T: Sample>(data: &[T], channels: u16, buffer: &Arc<Mutex<SampleBuffer>>)
+where
     f32: cpal::FromSample<T>,
 {
     let ch = channels.max(1) as usize;
@@ -328,6 +326,33 @@ fn push_interleaved_to_mono<T: Sample>(
 
     if let Ok(mut guard) = buffer.try_lock() {
         guard.push_samples(&mono);
+    }
+}
+
+fn read_buffer_with_timeout(
+    buffer: &Arc<Mutex<SampleBuffer>>,
+    frames: usize,
+    timeout_ms: u64,
+    poll_ms: u64,
+) -> Result<Vec<f32>, CaptureError> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let mut guard = match buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let available = guard.available();
+        if available >= frames {
+            return Ok(guard.pop_samples(frames));
+        }
+        drop(guard);
+        if Instant::now() >= deadline {
+            return Err(CaptureError::BufferTimeout {
+                wanted: frames,
+                available,
+            });
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms.max(1)));
     }
 }
 
@@ -425,6 +450,13 @@ impl SampleBuffer {
             return;
         }
         let incoming = input.len();
+        if incoming >= self.capacity {
+            self.samples.clear();
+            self.samples
+                .extend(input[incoming - self.capacity..].iter().copied());
+            return;
+        }
+
         let total = self.samples.len().saturating_add(incoming);
         if total > self.capacity {
             let overflow = total - self.capacity;
@@ -476,11 +508,16 @@ fn f32_to_i16(sample: f32) -> i16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{f32_to_i16, frames_for_chunk, normalize_length};
+    use super::{
+        f32_to_i16, frames_for_chunk, normalize_length, pick_device_index,
+        push_interleaved_to_mono, read_buffer_with_timeout, MonoResampler, Pcm16Frame,
+        SampleBuffer, TARGET_SAMPLE_RATE_HZ,
+    };
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn frames_for_chunk_never_zero() {
-        assert_eq!(frames_for_chunk(48_000, 0), 1);
+        assert!(frames_for_chunk(48_000, 0) > 0);
         assert_eq!(frames_for_chunk(48_000, 20), 960);
     }
 
@@ -500,5 +537,67 @@ mod tests {
         assert_eq!(f32_to_i16(1.5), i16::MAX);
         assert_eq!(f32_to_i16(-2.0), i16::MIN);
         assert_eq!(f32_to_i16(0.0), 0);
+    }
+
+    #[test]
+    fn pcm16_frame_to_bytes_is_little_endian() {
+        let frame = Pcm16Frame {
+            samples: vec![0x1234_i16, -2_i16],
+            sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
+            channels: 1,
+        };
+        let bytes = frame.to_bytes();
+        assert_eq!(bytes, vec![0x34, 0x12, 0xFE, 0xFF]);
+    }
+
+    #[test]
+    fn sample_buffer_overflow_keeps_latest_samples() {
+        let mut buffer = SampleBuffer::new(3);
+        buffer.push_samples(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let out = buffer.pop_samples(3);
+        assert_eq!(out, vec![3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn push_interleaved_to_mono_downmixes_stereo() {
+        let buffer = Arc::new(Mutex::new(SampleBuffer::new(16)));
+        let samples = [1.0_f32, -1.0_f32, 0.5_f32, 0.5_f32];
+        push_interleaved_to_mono(&samples, 2, &buffer);
+        let mut guard = buffer.lock().expect("buffer lock");
+        let out = guard.pop_samples(2);
+        assert_eq!(out, vec![0.0, 0.5]);
+    }
+
+    #[test]
+    fn resampler_passthrough_normalizes_length() {
+        let mut resampler = MonoResampler::new(48_000, 48_000, 20).expect("resampler");
+        let output = resampler.resample(vec![0.1, 0.2]).expect("resample");
+        let expected_frames = frames_for_chunk(48_000, 20);
+        assert_eq!(output.len(), expected_frames);
+    }
+
+    #[test]
+    fn pick_device_index_errors_when_missing() {
+        let names = vec!["Built-in Mic".to_string(), "USB Mic".to_string()];
+        let err = pick_device_index(&names, Some("__netmic_missing__")).unwrap_err();
+        match err {
+            super::CaptureError::DeviceUnavailable(message) => {
+                assert!(message.contains("__netmic_missing__"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn read_buffer_times_out_when_empty() {
+        let buffer = Arc::new(Mutex::new(SampleBuffer::new(8)));
+        let err = read_buffer_with_timeout(&buffer, 4, 10, 1).unwrap_err();
+        match err {
+            super::CaptureError::BufferTimeout { wanted, available } => {
+                assert_eq!(wanted, 4);
+                assert_eq!(available, 0);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }

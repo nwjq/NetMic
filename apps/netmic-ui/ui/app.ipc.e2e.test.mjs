@@ -1,0 +1,133 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { JSDOM } from "jsdom";
+import { defaultSnapshot } from "./app.core.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const buildDom = async () => {
+  const html = await readFile(join(__dirname, "index.html"), "utf-8");
+  const dom = new JSDOM(html, { url: "http://localhost" });
+
+  global.window = dom.window;
+  global.document = dom.window.document;
+  global.HTMLElement = dom.window.HTMLElement;
+  global.Event = dom.window.Event;
+
+  const canvasProto = dom.window.HTMLCanvasElement.prototype;
+  Object.defineProperty(canvasProto, "getContext", {
+    configurable: true,
+    value: () => ({
+      clearRect() {},
+      stroke() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo() {},
+      fillRect() {},
+    }),
+  });
+
+  return dom;
+};
+
+const createTauriStub = () => {
+  let snapshot = defaultSnapshot();
+  const calls = [];
+  const listeners = new Map();
+
+  const invoke = async (command, args = {}) => {
+    calls.push({ command, args });
+    switch (command) {
+      case "get_status":
+        return { ...snapshot };
+      case "set_mode": {
+        const mode = args.mode === "server" ? "server" : "client";
+        snapshot = {
+          ...snapshot,
+          mode,
+          status: "idle",
+          status_note: "准备就绪",
+          runtime: { ...snapshot.runtime, peer_addr: null, connected_seconds: 0 },
+        };
+        return { ...snapshot };
+      }
+      case "start": {
+        if (snapshot.mode === "server") {
+          snapshot = { ...snapshot, status: "listening", status_note: "等待客户端连接" };
+        } else {
+          snapshot = { ...snapshot, status: "connecting", status_note: "正在建立连接" };
+        }
+        return { ...snapshot };
+      }
+      case "stop": {
+        snapshot = { ...snapshot, status: "idle", status_note: "已停止" };
+        return { ...snapshot };
+      }
+      case "set_config": {
+        snapshot = { ...snapshot, config: { ...snapshot.config, ...args.config } };
+        return { ...snapshot };
+      }
+      case "reset_defaults": {
+        snapshot = defaultSnapshot();
+        return { ...snapshot };
+      }
+      case "clear_logs":
+        snapshot = { ...snapshot, logs: [] };
+        return { ...snapshot };
+      case "export_logs":
+        return { ok: true };
+      default:
+        return { ...snapshot };
+    }
+  };
+
+  const event = {
+    listen(name, handler) {
+      listeners.set(name, handler);
+    },
+  };
+
+  const emit = (name, payload) => {
+    const handler = listeners.get(name);
+    if (handler) {
+      handler({ payload });
+    }
+  };
+
+  return { invoke, event, emit, calls };
+};
+
+test("ipc adapter calls invoke and updates UI from snapshot", async () => {
+  await buildDom();
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = { invoke: tauri.invoke, event: tauri.event };
+
+  await import("./app.js");
+
+  const modeButtons = document.querySelectorAll(".mode-btn");
+  const primary = document.getElementById("primary-action");
+  const statusNote = document.getElementById("status-note");
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(tauri.calls.some((call) => call.command === "get_status"));
+
+  modeButtons[1].dispatchEvent(new window.Event("click"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(tauri.calls.some((call) => call.command === "set_mode"));
+
+  primary.dispatchEvent(new window.Event("click"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(tauri.calls.some((call) => call.command === "start"));
+
+  tauri.emit("netmic://snapshot", {
+    ...defaultSnapshot(),
+    status: "error",
+    status_note: "来自 IPC 事件",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(statusNote.textContent, "来自 IPC 事件");
+});

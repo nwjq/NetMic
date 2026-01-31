@@ -13,8 +13,15 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use netmic_proto::datagram::{split_datagram, DatagramKind};
-use netmic_proto::protocol::SessionParams;
+use netmic_proto::config::normalize_session_params;
+use netmic_proto::control::{
+    decode_control_message, decode_control_payload, encode_control_message,
+    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+};
+use netmic_proto::datagram::{
+    split_audio_pcm16_with_header, split_datagram, wrap_control_json, DatagramKind,
+};
+use netmic_proto::protocol::{HandshakeRequest, HandshakeResponse, SessionParams};
 use tracing::{debug, info, warn};
 
 /// 默认 UDP 监听端口（MVP 占位值，后续可统一到配置模块）。
@@ -49,6 +56,112 @@ fn main() -> Result<()> {
 
     info!(%bind_addr, "udp receiver skeleton ready");
     run_receiver_loop(&socket, &params, audio_sink)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use netmic_proto::config::{DEFAULT_CHUNK_MS, DEFAULT_SAMPLE_RATE_HZ};
+    use netmic_proto::control::{decode_control_message, decode_control_payload};
+    use netmic_proto::control::{CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE};
+    use netmic_proto::datagram::wrap_control_json;
+    use netmic_proto::protocol::HandshakeRequest;
+
+    #[test]
+    fn receiver_locks_first_client_and_rejects_others() {
+        let params = SessionParams::mvp_default();
+        let mut ctx =
+            ReceiverContext::new(params.sample_rate_hz, params.channels, Box::new(NullSink));
+        let now = Instant::now();
+        let addr_a: SocketAddr = "127.0.0.1:10001".parse().unwrap();
+        let addr_b: SocketAddr = "127.0.0.1:10002".parse().unwrap();
+
+        assert!(ctx.accept_or_lock_client(addr_a, now));
+        assert_eq!(ctx.active_client, Some(addr_a));
+        assert_eq!(ctx.state, ConnectionState::Active);
+
+        assert!(!ctx.accept_or_lock_client(addr_b, now));
+        assert_eq!(ctx.metrics.busy_rejects, 1);
+    }
+
+    #[test]
+    fn receiver_reconnect_window_releases_client() {
+        let params = SessionParams::mvp_default();
+        let mut ctx =
+            ReceiverContext::new(params.sample_rate_hz, params.channels, Box::new(NullSink));
+        let base = Instant::now();
+        let addr: SocketAddr = "127.0.0.1:10003".parse().unwrap();
+
+        assert!(ctx.accept_or_lock_client(addr, base));
+        ctx.update_reconnect_state(base + Duration::from_secs(RECONNECT_GRACE_SECS + 1));
+        assert_eq!(ctx.state, ConnectionState::Reconnecting);
+
+        ctx.update_reconnect_state(base + Duration::from_secs(RECONNECT_WINDOW_SECS + 1));
+        assert_eq!(ctx.state, ConnectionState::Idle);
+        assert!(ctx.active_client.is_none());
+    }
+
+    #[test]
+    fn metrics_tracks_buffer_depth_for_audio_payloads() {
+        let now = Instant::now();
+        let mut metrics = ReceiverMetrics::new(now, 48_000, 1);
+        let payload = vec![0_u8; 960 * 2];
+
+        metrics.on_datagram(DatagramKind::AudioPcm16, &payload);
+        assert_eq!(metrics.buffer_depth_ms(), 20);
+    }
+
+    #[test]
+    fn metrics_reports_rms_and_peak() {
+        let now = Instant::now();
+        let mut metrics = ReceiverMetrics::new(now, 48_000, 1);
+        let samples = [0_i16, 1000_i16, -1000_i16];
+        let mut payload = Vec::new();
+        for sample in samples {
+            payload.extend_from_slice(&sample.to_le_bytes());
+        }
+
+        metrics.on_datagram(DatagramKind::AudioPcm16, &payload);
+        let (rms, peak) = metrics.take_audio_level_snapshot();
+        assert_eq!(peak, 1000);
+        let expected = ((0.0_f32 * 0.0 + 1000.0_f32 * 1000.0 + 1000.0_f32 * 1000.0) / 3.0).sqrt();
+        assert!((rms - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn handshake_request_returns_control_response() {
+        let params = SessionParams::mvp_default();
+        let mut ctx =
+            ReceiverContext::new(params.sample_rate_hz, params.channels, Box::new(NullSink));
+        let now = Instant::now();
+        let addr: SocketAddr = "127.0.0.1:12001".parse().unwrap();
+        let request = HandshakeRequest {
+            session_id: "session-1".to_string(),
+            client_name: "client".to_string(),
+            requested: SessionParams {
+                sample_rate_hz: 12_345,
+                chunk_ms: 15,
+                ..SessionParams::mvp_default()
+            },
+            token: None,
+        };
+        let payload = encode_control_message(CONTROL_TYPE_HANDSHAKE_REQUEST, &request).unwrap();
+        let datagram = wrap_control_json(&payload);
+        let (_, payload) = split_datagram(&datagram).expect("split");
+        let response_bytes = ctx
+            .handle_control_payload(payload, addr, now)
+            .expect("response");
+        let (_, response_payload) = split_datagram(&response_bytes).expect("split response");
+        let (msg_type, payload_value) = decode_control_message(response_payload).expect("decode");
+        assert_eq!(msg_type, CONTROL_TYPE_HANDSHAKE_RESPONSE);
+        let response: HandshakeResponse =
+            decode_control_payload(payload_value).expect("payload decode");
+        assert!(response.accepted);
+        assert!(!response.busy);
+        assert_eq!(response.session_id, "session-1");
+        assert_eq!(response.effective.sample_rate_hz, DEFAULT_SAMPLE_RATE_HZ);
+        assert_eq!(response.effective.chunk_ms, DEFAULT_CHUNK_MS);
+    }
 }
 
 fn init_tracing() {
@@ -127,25 +240,44 @@ fn run_receiver_loop(
             Ok((len, addr)) => {
                 let packet = &buf[..len];
                 let now = Instant::now();
-                if !ctx.accept_or_lock_client(addr, now) {
-                    continue;
-                }
                 if let Some((kind, payload)) = split_datagram(packet) {
-                    ctx.metrics.on_datagram(kind, payload);
                     match kind {
-                        DatagramKind::ControlJson => handle_control_payload(payload, addr),
-                        DatagramKind::AudioPcm16 => {
-                            if let Err(err) = ctx.audio_sink.write_pcm16(payload) {
-                                warn!(%err, "audio sink write failed");
+                        DatagramKind::ControlJson => {
+                            ctx.metrics.on_datagram(kind, payload);
+                            if let Some(response) = ctx.handle_control_payload(payload, addr, now) {
+                                if let Err(err) = socket.send_to(&response, addr) {
+                                    warn!(%err, %addr, "failed to send control response");
+                                }
                             }
-                            info!(
-                                %addr,
-                                bytes = payload.len(),
-                                kind = kind.as_str(),
-                                "received audio payload (pcm16 placeholder)"
-                            );
+                        }
+                        DatagramKind::AudioPcm16 => {
+                            if !ctx.accept_or_lock_client(addr, now) {
+                                continue;
+                            }
+                            match split_audio_pcm16_with_header(payload) {
+                                Ok((header, pcm)) => {
+                                    ctx.metrics.on_datagram(kind, pcm);
+                                    if let Err(err) = ctx.audio_sink.write_pcm16(pcm) {
+                                        warn!(%err, "audio sink write failed");
+                                    }
+                                    info!(
+                                        %addr,
+                                        seq = header.seq,
+                                        timestamp_ms = header.timestamp_ms,
+                                        frame_samples = header.frame_samples,
+                                        bytes = pcm.len(),
+                                        kind = kind.as_str(),
+                                        "received audio payload (pcm16)"
+                                    );
+                                }
+                                Err(err) => {
+                                    warn!(%addr, %err, "failed to decode audio header");
+                                    ctx.metrics.on_datagram(kind, payload);
+                                }
+                            }
                         }
                         DatagramKind::Unknown(tag) => {
+                            ctx.metrics.on_datagram(kind, payload);
                             warn!(
                                 %addr,
                                 tag,
@@ -172,29 +304,6 @@ fn run_receiver_loop(
             Err(err) => {
                 warn!(%err, "udp recv error");
             }
-        }
-    }
-}
-
-/// 控制面占位处理：
-/// - 当前仅尝试解析 JSON 并读取 `type` 字段用于日志分流；
-/// - 真正的握手/心跳/统计结构体解析将在后续里程碑接入。
-fn handle_control_payload(payload: &[u8], addr: SocketAddr) {
-    match serde_json::from_slice::<serde_json::Value>(payload) {
-        Ok(value) => {
-            let msg_type = value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            info!(%addr, msg_type, "received control json payload");
-        }
-        Err(err) => {
-            warn!(
-                %addr,
-                %err,
-                bytes = payload.len(),
-                "failed to parse control json payload"
-            );
         }
     }
 }
@@ -314,6 +423,64 @@ impl ReceiverContext {
             "receiver state transition"
         );
         self.state = next;
+    }
+
+    fn handle_control_payload(
+        &mut self,
+        payload: &[u8],
+        addr: SocketAddr,
+        now: Instant,
+    ) -> Option<Vec<u8>> {
+        let (msg_type, payload_value) = match decode_control_message(payload) {
+            Ok(tuple) => tuple,
+            Err(err) => {
+                warn!(%addr, %err, "failed to decode control message");
+                return None;
+            }
+        };
+
+        if msg_type.as_str() == CONTROL_TYPE_HANDSHAKE_REQUEST {
+            let request: HandshakeRequest = match decode_control_payload(payload_value) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(%addr, %err, "invalid handshake request payload");
+                    return None;
+                }
+            };
+
+            let accepted = self.accept_or_lock_client(addr, now);
+            let normalize = normalize_session_params(&request.requested);
+            let (busy, reason) = if accepted {
+                (false, None)
+            } else {
+                (true, Some("busy".to_string()))
+            };
+
+            let response = HandshakeResponse {
+                session_id: request.session_id,
+                accepted,
+                reason,
+                effective: normalize.effective,
+                busy,
+            };
+            let payload = match encode_control_message(CONTROL_TYPE_HANDSHAKE_RESPONSE, &response) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(%addr, %err, "failed to encode handshake response");
+                    return None;
+                }
+            };
+            info!(
+                %addr,
+                accepted,
+                busy,
+                "handled handshake request"
+            );
+            return Some(wrap_control_json(&payload));
+        }
+
+        info!(%addr, msg_type, "received control json payload");
+        None
     }
 }
 
@@ -504,7 +671,7 @@ impl ReceiverMetrics {
     fn accumulate_audio_levels(&mut self, payload: &[u8]) {
         for chunk in payload.chunks_exact(2) {
             let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
-            let abs_sample = sample.abs() as u32;
+            let abs_sample = sample.unsigned_abs();
             if abs_sample > self.audio_level_peak {
                 self.audio_level_peak = abs_sample;
             }

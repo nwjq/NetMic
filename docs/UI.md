@@ -58,6 +58,7 @@
 - `reconnect_attempts: u32`
 - `mic_permission: String`（macOS 权限状态：已授权 / 未授权 / 不可用 / 未知 / 不适用）
 - `virtual_mic_name: String`
+- `last_error: Option<String>`（最近一次错误原因，用于状态页明确提示）
 
 ### UiDevices
 - `input: String[]`（输入设备列表，运行时从系统枚举刷新）

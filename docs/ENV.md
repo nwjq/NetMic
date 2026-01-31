@@ -12,6 +12,12 @@
 - `NETMIC_CLIENT_DEMO_SEND`
   - 默认值：未设置（关闭）
   - 用途：设置为 `1/true/on/yes` 时启用演示发送，发出 kind-framed UDP 包，便于手工联调。
+- `NETMIC_CLIENT_STREAM_SECS`
+  - 默认值：未设置（不限制时长）
+  - 用途：限制客户端持续发送的时长（秒）；设置为 `0` 表示不限制。
+- `NETMIC_CLIENT_HEARTBEAT_MS`
+  - 默认值：`1000`
+  - 用途：客户端心跳间隔（毫秒）；设置为 `0` 可禁用心跳。
 
 ## Server（netmic-server）
 
