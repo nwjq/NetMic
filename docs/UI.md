@@ -48,15 +48,19 @@
 - `audio_peak: u32`
 - `uplink_kbps: f32`
 
+### UiWaveform（时域波形事件载荷）
+- `ts_ms: u64`（毫秒时间戳）
+- `points: f32[]`（长度 128，范围 [-1, 1]，20 FPS）
+
 ### UiRuntime（运行态）
 - `peer_addr: Option<String>`
 - `connected_seconds: u64`
 - `reconnect_attempts: u32`
-- `mic_permission: String`（macOS 权限占位）
+- `mic_permission: String`（macOS 权限状态：已授权 / 未授权 / 不可用 / 未知 / 不适用）
 - `virtual_mic_name: String`
 
 ### UiDevices
-- `input: String[]`（输入设备列表）
+- `input: String[]`（输入设备列表，运行时从系统枚举刷新）
 
 ### UiFallbackEvent
 - `field: String`
@@ -82,6 +86,7 @@
 
 ## 事件
 - `netmic://snapshot`：UI 订阅后接收 `UiSnapshot` 推送
+- `netmic://waveform`：客户端采集到的时域波形（20 FPS / 128 点）
 
 ## UI 对齐 MVP 的关键点
 - 参数范围：采样率 / 帧长 / bitrate / buffer 必须限制在 `MVP.md` 范围内
@@ -89,3 +94,5 @@
 - 状态页：连接状态 + 指标 + 当前生效参数
 - 日志页：按级别过滤 + 导出入口（MVP）
 
+## macOS 权限说明
+- 需要在 `apps/netmic-ui/src-tauri/Info.plist` 提供 `NSMicrophoneUsageDescription`

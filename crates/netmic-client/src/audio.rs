@@ -60,6 +60,7 @@ impl Pcm16Frame {
 #[derive(Debug)]
 pub enum CaptureError {
     DeviceUnavailable(String),
+    DeviceListFailed(String),
     StreamConfigUnavailable(String),
     StreamBuildFailed(String),
     StreamPlayFailed(String),
@@ -71,6 +72,7 @@ impl std::fmt::Display for CaptureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CaptureError::DeviceUnavailable(msg) => write!(f, "device unavailable: {msg}"),
+            CaptureError::DeviceListFailed(msg) => write!(f, "device list failed: {msg}"),
             CaptureError::StreamConfigUnavailable(msg) => write!(f, "stream config failed: {msg}"),
             CaptureError::StreamBuildFailed(msg) => write!(f, "stream build failed: {msg}"),
             CaptureError::StreamPlayFailed(msg) => write!(f, "stream play failed: {msg}"),
@@ -95,7 +97,26 @@ pub struct AudioPipeline {
 
 impl AudioPipeline {
     pub fn new(params: &SessionParams) -> Result<Self, CaptureError> {
-        let capture = CpalCapture::new(params)?;
+        let capture = CpalCapture::new(params, None)?;
+        let resampler = MonoResampler::new(
+            capture.input_sample_rate_hz,
+            TARGET_SAMPLE_RATE_HZ,
+            params.chunk_ms,
+        )?;
+
+        Ok(Self {
+            capture,
+            resampler,
+            target_sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
+            chunk_ms: params.chunk_ms,
+        })
+    }
+
+    pub fn new_with_device(
+        params: &SessionParams,
+        device_name: Option<&str>,
+    ) -> Result<Self, CaptureError> {
+        let capture = CpalCapture::new(params, device_name)?;
         let resampler = MonoResampler::new(
             capture.input_sample_rate_hz,
             TARGET_SAMPLE_RATE_HZ,
@@ -135,11 +156,9 @@ struct CpalCapture {
 }
 
 impl CpalCapture {
-    fn new(params: &SessionParams) -> Result<Self, CaptureError> {
+    fn new(params: &SessionParams, device_name: Option<&str>) -> Result<Self, CaptureError> {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or_else(|| {
-            CaptureError::DeviceUnavailable("no default input device".to_string())
-        })?;
+        let device = select_input_device(&host, device_name)?;
         let supported_config = device
             .default_input_config()
             .map_err(|err| CaptureError::StreamConfigUnavailable(err.to_string()))?;
@@ -216,6 +235,51 @@ impl CpalCapture {
     }
 }
 
+pub fn list_input_devices() -> Result<Vec<String>, CaptureError> {
+    let host = cpal::default_host();
+    let devices = host
+        .input_devices()
+        .map_err(|err| CaptureError::DeviceListFailed(err.to_string()))?;
+    let mut names = Vec::new();
+    for device in devices {
+        if let Ok(name) = device.name() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn select_input_device(
+    host: &cpal::Host,
+    device_name: Option<&str>,
+) -> Result<cpal::Device, CaptureError> {
+    let desired = match device_name {
+        Some(name) if !name.trim().is_empty() && name != "系统默认" => Some(name),
+        _ => None,
+    };
+
+    if let Some(target_name) = desired {
+        let devices = host
+            .input_devices()
+            .map_err(|err| CaptureError::DeviceListFailed(err.to_string()))?;
+        for device in devices {
+            if let Ok(name) = device.name() {
+                if name == target_name {
+                    return Ok(device);
+                }
+            }
+        }
+        return Err(CaptureError::DeviceUnavailable(format!(
+            "input device not found: {target_name}"
+        )));
+    }
+
+    host.default_input_device().ok_or_else(|| {
+        CaptureError::DeviceUnavailable("no default input device".to_string())
+    })
+}
 fn build_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,

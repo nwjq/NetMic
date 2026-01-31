@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use netmic_client::{list_input_devices, AudioPipeline, CaptureError};
 use netmic_proto::config::normalize_session_params;
 use netmic_proto::protocol::SessionParams;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 const EVENT_SNAPSHOT: &str = "netmic://snapshot";
+const EVENT_WAVEFORM: &str = "netmic://waveform";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiConfig {
@@ -69,6 +71,12 @@ struct UiLogEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct UiWaveform {
+    ts_ms: u64,
+    points: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiSnapshot {
     mode: String,
     status: String,
@@ -86,7 +94,10 @@ struct AppState {
     snapshot: UiSnapshot,
     streaming: bool,
     metrics_loop: bool,
+    capture_loop: bool,
     connected_since: Option<Instant>,
+    latest_audio_rms: f32,
+    latest_audio_peak: u32,
 }
 
 type SharedState = Arc<Mutex<AppState>>;
@@ -130,11 +141,11 @@ impl Default for AppState {
                 peer_addr: None,
                 connected_seconds: 0,
                 reconnect_attempts: 0,
-                mic_permission: "unknown".to_string(),
+                mic_permission: "未知".to_string(),
                 virtual_mic_name: "NetMic Virtual Mic".to_string(),
             },
             devices: UiDevices {
-                input: vec!["系统默认".to_string(), "USB Mic".to_string()],
+                input: vec!["系统默认".to_string()],
             },
             logs: vec![UiLogEntry {
                 ts_ms: now_ms(),
@@ -147,12 +158,33 @@ impl Default for AppState {
             snapshot,
             streaming: false,
             metrics_loop: false,
+            capture_loop: false,
             connected_since: None,
+            latest_audio_rms: 0.0,
+            latest_audio_peak: 0,
         }
     }
 }
 
 impl AppState {
+    fn refresh_devices(&mut self) {
+        let mut devices = vec!["系统默认".to_string()];
+        match list_input_devices() {
+            Ok(list) => {
+                for name in list {
+                    if name != "系统默认" {
+                        devices.push(name);
+                    }
+                }
+                self.snapshot.devices.input = devices;
+            }
+            Err(err) => {
+                self.snapshot.devices.input = devices;
+                self.push_log("warn", format!("输入设备枚举失败：{err}"));
+            }
+        }
+    }
+
     fn push_log(&mut self, level: &str, message: impl Into<String>) {
         let entry = UiLogEntry {
             ts_ms: now_ms(),
@@ -216,8 +248,8 @@ impl AppState {
         self.snapshot.metrics.jitter_buffer_depth_ms = 60.0 + (t / 2.6).sin().abs() * 30.0;
         self.snapshot.metrics.estimated_e2e_latency_ms =
             self.snapshot.metrics.buffer_depth_ms + self.snapshot.metrics.rtt_ms + 12.0;
-        self.snapshot.metrics.audio_rms = (t * 1.2).sin().abs() * 0.7;
-        self.snapshot.metrics.audio_peak = (6000.0 + (t * 1.4).sin().abs() * 12000.0) as u32;
+        self.snapshot.metrics.audio_rms = self.latest_audio_rms;
+        self.snapshot.metrics.audio_peak = self.latest_audio_peak;
         self.snapshot.metrics.uplink_kbps = if self.snapshot.config.codec == "opus" {
             self.snapshot.config.opus_bitrate_kbps as f32
         } else {
@@ -228,7 +260,8 @@ impl AppState {
 
 #[tauri::command]
 fn get_status(state: State<SharedState>) -> UiSnapshot {
-    let guard = state.lock().expect("state lock");
+    let mut guard = state.lock().expect("state lock");
+    guard.refresh_devices();
     guard.snapshot.clone()
 }
 
@@ -241,9 +274,17 @@ fn set_mode(state: State<SharedState>, app: AppHandle, mode: String) -> UiSnapsh
         guard.snapshot.status_note = "准备就绪".to_string();
         guard.snapshot.runtime.peer_addr = None;
         guard.snapshot.runtime.connected_seconds = 0;
+        guard.snapshot.runtime.mic_permission = if mode == "server" {
+            "不适用".to_string()
+        } else {
+            "未知".to_string()
+        };
         guard.streaming = false;
         guard.connected_since = None;
+        guard.latest_audio_rms = 0.0;
+        guard.latest_audio_peak = 0;
         guard.reset_metrics();
+        guard.refresh_devices();
         let mode_label = guard.snapshot.mode.clone();
         guard.push_log("info", format!("切换到 {} 模式", mode_label));
         guard.snapshot.clone()
@@ -301,6 +342,9 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
     emit_snapshot(&app, &snapshot);
     ensure_metrics_loop(state.inner().clone(), app.clone());
+    if mode == "client" {
+        ensure_capture_loop(state.inner().clone(), app.clone());
+    }
 
     if mode == "client" {
         let state = state.inner().clone();
@@ -338,6 +382,11 @@ fn stop(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
         guard.snapshot.runtime.peer_addr = None;
         guard.snapshot.runtime.connected_seconds = 0;
         guard.connected_since = None;
+        guard.latest_audio_rms = 0.0;
+        guard.latest_audio_peak = 0;
+        if guard.snapshot.mode == "client" {
+            guard.snapshot.runtime.mic_permission = "未知".to_string();
+        }
         guard.reset_metrics();
         guard.push_log("warn", "已停止运行");
         guard.snapshot.clone()
@@ -418,8 +467,130 @@ fn ensure_metrics_loop(state: SharedState, app: AppHandle) {
     });
 }
 
+fn ensure_capture_loop(state: SharedState, app: AppHandle) {
+    let should_spawn = {
+        let mut guard = state.lock().expect("state lock");
+        if guard.capture_loop {
+            false
+        } else {
+            guard.capture_loop = true;
+            true
+        }
+    };
+
+    if !should_spawn {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let (params, input_device) = {
+            let guard = state.lock().expect("state lock");
+            (
+                guard.snapshot.effective.clone(),
+                guard.snapshot.config.input_device.clone(),
+            )
+        };
+
+        let device_name = if input_device == "系统默认" {
+            None
+        } else {
+            Some(input_device.as_str())
+        };
+
+        let mut pipeline = match AudioPipeline::new_with_device(&params, device_name) {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                let snapshot = {
+                    let mut guard = state.lock().expect("state lock");
+                    guard.snapshot.status = "error".to_string();
+                    guard.snapshot.status_note = "麦克风采集失败".to_string();
+                    guard.streaming = false;
+                    guard.connected_since = None;
+                    guard.latest_audio_rms = 0.0;
+                    guard.latest_audio_peak = 0;
+                    guard.snapshot.runtime.mic_permission =
+                        permission_label_from_error(&err).to_string();
+                    guard.push_log("error", format!("采集初始化失败：{err}"));
+                    guard.capture_loop = false;
+                    guard.snapshot.clone()
+                };
+                emit_snapshot(&app, &snapshot);
+                return;
+            }
+        };
+
+        let waveform_interval = Duration::from_millis(50);
+        let mut last_emit = Instant::now() - waveform_interval;
+
+        loop {
+            let (streaming, mode) = {
+                let guard = state.lock().expect("state lock");
+                (guard.streaming, guard.snapshot.mode.clone())
+            };
+            if !streaming || mode != "client" {
+                let mut guard = state.lock().expect("state lock");
+                guard.capture_loop = false;
+                return;
+            }
+
+            let frame = match pipeline.next_frame() {
+                Ok(frame) => frame,
+                Err(err) => {
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.snapshot.status = "error".to_string();
+                        guard.snapshot.status_note = "麦克风采集失败".to_string();
+                        guard.streaming = false;
+                        guard.connected_since = None;
+                        guard.latest_audio_rms = 0.0;
+                        guard.latest_audio_peak = 0;
+                        guard.push_log("error", format!("采集失败：{err}"));
+                        guard.capture_loop = false;
+                        guard.snapshot.clone()
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    return;
+                }
+            };
+
+            let (points, rms, peak) = build_waveform(&frame.samples, 128);
+            {
+                let mut guard = state.lock().expect("state lock");
+                guard.latest_audio_rms = rms;
+                guard.latest_audio_peak = peak;
+                if guard.snapshot.mode == "client" {
+                    guard.snapshot.runtime.mic_permission = "已授权".to_string();
+                }
+            }
+
+            if last_emit.elapsed() >= waveform_interval {
+                let waveform = UiWaveform {
+                    ts_ms: now_ms(),
+                    points,
+                };
+                emit_waveform(&app, &waveform);
+                last_emit = Instant::now();
+            }
+        }
+    });
+}
+
 fn emit_snapshot(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = app.emit(EVENT_SNAPSHOT, snapshot.clone());
+}
+
+fn emit_waveform(app: &AppHandle, waveform: &UiWaveform) {
+    let _ = app.emit(EVENT_WAVEFORM, waveform.clone());
+}
+
+fn permission_label_from_error(err: &CaptureError) -> &'static str {
+    match err {
+        CaptureError::DeviceUnavailable(_) | CaptureError::DeviceListFailed(_) => "不可用",
+        CaptureError::StreamConfigUnavailable(_)
+        | CaptureError::StreamBuildFailed(_)
+        | CaptureError::StreamPlayFailed(_) => "未授权",
+        CaptureError::BufferTimeout { .. } | CaptureError::ResampleFailed(_) => "未知",
+    }
 }
 
 fn now_ms() -> u64 {
@@ -427,6 +598,37 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_millis() as u64
+}
+
+fn build_waveform(samples: &[i16], points: usize) -> (Vec<f32>, f32, u32) {
+    if samples.is_empty() || points == 0 {
+        return (vec![0.0; points], 0.0, 0);
+    }
+
+    let len = samples.len();
+    let step = len as f32 / points as f32;
+    let mut out = Vec::with_capacity(points);
+    let mut sum_sq = 0.0_f32;
+    let mut peak = 0_u32;
+    let denom = i16::MAX as f32;
+
+    for sample in samples {
+        let v = *sample as f32 / denom;
+        sum_sq += v * v;
+        let abs = (*sample as i32).unsigned_abs();
+        if abs > peak {
+            peak = abs;
+        }
+    }
+
+    for idx in 0..points {
+        let sample_index = ((idx as f32) * step) as usize;
+        let sample = samples.get(sample_index).copied().unwrap_or(0);
+        out.push(sample as f32 / denom);
+    }
+
+    let rms = (sum_sq / len as f32).sqrt();
+    (out, rms, peak)
 }
 
 fn main() {

@@ -13,3 +13,4 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 tracing = "0.1"
 netmic-proto = { path = "../../../crates/netmic-proto" }
+netmic-client = { path = "../../../crates/netmic-client" }

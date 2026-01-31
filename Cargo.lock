@@ -1972,6 +1972,7 @@ dependencies = [
 name = "netmic-ui"
 version = "0.1.0"
 dependencies = [
+ "netmic-client",
  "netmic-proto",
  "serde",
  "serde_json",

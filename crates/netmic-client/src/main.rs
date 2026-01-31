@@ -8,9 +8,7 @@ use std::env;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
-mod audio;
-
-use audio::{AudioPipeline, Pcm16Frame};
+use netmic_client::{AudioPipeline, Pcm16Frame};
 use netmic_proto::datagram::{
     wrap_audio_pcm16, wrap_control_json, DatagramKind, DATAGRAM_KIND_AUDIO_PCM16,
     DATAGRAM_KIND_CONTROL_JSON,
@@ -300,7 +298,7 @@ mod tests {
         build_audio_datagram, build_control_datagram, DATAGRAM_KIND_AUDIO_PCM16,
         DATAGRAM_KIND_CONTROL_JSON,
     };
-    use crate::audio::Pcm16Frame;
+    use netmic_client::Pcm16Frame;
     use netmic_proto::datagram::{split_datagram, DatagramKind};
     use netmic_proto::protocol::SessionParams;
 

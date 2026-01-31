@@ -1,5 +1,6 @@
 const UI_VERSION = "0.1.0";
 const EVENT_SNAPSHOT = "netmic://snapshot";
+const EVENT_WAVEFORM = "netmic://waveform";
 
 const defaultSnapshot = () => ({
   mode: "client",
@@ -44,11 +45,11 @@ const defaultSnapshot = () => ({
     peer_addr: null,
     connected_seconds: 0,
     reconnect_attempts: 0,
-    mic_permission: "unknown",
+    mic_permission: "未知",
     virtual_mic_name: "NetMic Virtual Mic",
   },
   devices: {
-    input: ["系统默认", "USB Mic"],
+    input: ["系统默认"],
   },
   logs: [
     {
@@ -61,10 +62,18 @@ const defaultSnapshot = () => ({
 
 let state = defaultSnapshot();
 let currentTab = "config";
+let waveformPoints = [];
+let waveformCanvas = null;
+let waveformCtx = null;
 
 const sampleRates = [16000, 24000, 32000, 44100, 48000];
 const chunkOptions = [10, 20, 40, 60];
 const bufferOptions = [40, 60, 80, 100, 150, 200, 300, 400];
+const WAVEFORM_POINTS = 128;
+const WAVEFORM_FPS = 20;
+const WAVEFORM_INTERVAL_MS = Math.floor(1000 / WAVEFORM_FPS);
+
+waveformPoints = new Array(WAVEFORM_POINTS).fill(0);
 
 const elements = {
   modeButtons: Array.from(document.querySelectorAll(".mode-btn")),
@@ -136,12 +145,19 @@ const deepClone = (value) => JSON.parse(JSON.stringify(value));
 const createMockAdapter = () => {
   let mockState = deepClone(state);
   let listeners = [];
+  let waveListeners = [];
   let ticker = null;
+  let waveTicker = null;
   let startAt = null;
 
   const emit = () => {
     const snapshot = deepClone(mockState);
     listeners.forEach((handler) => handler(snapshot));
+  };
+
+  const emitWaveform = (points) => {
+    const payload = { ts_ms: Date.now(), points };
+    waveListeners.forEach((handler) => handler(payload));
   };
 
   const pushLog = (level, message) => {
@@ -169,6 +185,17 @@ const createMockAdapter = () => {
         : (mockState.config.sample_rate_hz * 16) / 1000;
   };
 
+  const updateWaveform = () => {
+    if (!isBusy(mockState)) return;
+    const now = Date.now();
+    const t = now / 1000;
+    const points = new Array(WAVEFORM_POINTS).fill(0).map((_, idx) => {
+      const phase = t * 2 + idx / WAVEFORM_POINTS;
+      return Math.sin(phase * Math.PI * 2) * 0.6;
+    });
+    emitWaveform(points);
+  };
+
   const startTicker = () => {
     if (ticker) return;
     ticker = setInterval(() => {
@@ -177,10 +204,21 @@ const createMockAdapter = () => {
     }, 1000);
   };
 
+  const startWaveTicker = () => {
+    if (waveTicker) return;
+    waveTicker = setInterval(() => {
+      updateWaveform();
+    }, WAVEFORM_INTERVAL_MS);
+  };
+
   const stopTicker = () => {
     if (ticker) {
       clearInterval(ticker);
       ticker = null;
+    }
+    if (waveTicker) {
+      clearInterval(waveTicker);
+      waveTicker = null;
     }
   };
 
@@ -271,11 +309,30 @@ const createMockAdapter = () => {
       listeners.push(handler);
       startTicker();
     },
+    onWaveform(handler) {
+      waveListeners.push(handler);
+      startWaveTicker();
+    },
   };
 };
 
-const createTauriAdapter = () => {
-  const { invoke, event } = window.__TAURI__;
+const resolveTauriApi = () => {
+  if (!window.__TAURI__) return null;
+  const legacyInvoke = window.__TAURI__.invoke;
+  const legacyEvent = window.__TAURI__.event;
+  if (typeof legacyInvoke === "function" && legacyEvent) {
+    return { invoke: legacyInvoke, event: legacyEvent };
+  }
+  const core = window.__TAURI__.core;
+  const event = window.__TAURI__.event;
+  if (core && typeof core.invoke === "function" && event) {
+    return { invoke: core.invoke, event };
+  }
+  return null;
+};
+
+const createTauriAdapter = (tauriApi) => {
+  const { invoke, event } = tauriApi;
   return {
     async getStatus() {
       return invoke("get_status");
@@ -311,10 +368,19 @@ const createTauriAdapter = () => {
         }
       });
     },
+    onWaveform(handler) {
+      event.listen(EVENT_WAVEFORM, (payload) => {
+        if (payload && payload.payload) {
+          handler(payload.payload);
+        }
+      });
+    },
   };
 };
 
-const adapter = window.__TAURI__ ? createTauriAdapter() : createMockAdapter();
+const tauriApi = resolveTauriApi();
+const isTauri = Boolean(tauriApi);
+let adapter = isTauri ? createTauriAdapter(tauriApi) : createMockAdapter();
 
 const setState = (snapshot) => {
   state = snapshot;
@@ -354,6 +420,60 @@ const renderPrimaryAction = () => {
     return;
   }
   elements.primaryAction.textContent = state.mode === "client" ? "开始推流" : "开始监听";
+};
+
+const ensureWaveformCanvas = () => {
+  waveformCanvas = document.getElementById("waveform-canvas");
+  if (!waveformCanvas) return;
+  waveformCtx = waveformCanvas.getContext("2d");
+  resizeWaveformCanvas();
+  drawWaveform();
+};
+
+const resizeWaveformCanvas = () => {
+  if (!waveformCanvas || !waveformCtx) return;
+  const rect = waveformCanvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  waveformCanvas.width = Math.floor(rect.width);
+  waveformCanvas.height = Math.floor(rect.height);
+};
+
+const drawWaveform = () => {
+  if (!waveformCanvas || !waveformCtx) return;
+  const width = waveformCanvas.width;
+  const height = waveformCanvas.height;
+  if (width === 0 || height === 0) return;
+
+  waveformCtx.clearRect(0, 0, width, height);
+  waveformCtx.strokeStyle = "rgba(15, 138, 123, 0.4)";
+  waveformCtx.lineWidth = 1;
+  waveformCtx.beginPath();
+  waveformCtx.moveTo(0, height / 2);
+  waveformCtx.lineTo(width, height / 2);
+  waveformCtx.stroke();
+
+  const points = waveformPoints.length ? waveformPoints : new Array(WAVEFORM_POINTS).fill(0);
+  waveformCtx.strokeStyle = "rgba(15, 138, 123, 0.9)";
+  waveformCtx.lineWidth = 2;
+  waveformCtx.beginPath();
+  points.forEach((value, idx) => {
+    const x = (idx / (points.length - 1)) * width;
+    const y = height / 2 - value * (height * 0.4);
+    if (idx === 0) {
+      waveformCtx.moveTo(x, y);
+    } else {
+      waveformCtx.lineTo(x, y);
+    }
+  });
+  waveformCtx.stroke();
+};
+
+const updateWaveform = (payload) => {
+  if (!payload) return;
+  const nextPoints = Array.isArray(payload) ? payload : payload.points;
+  if (!Array.isArray(nextPoints) || nextPoints.length === 0) return;
+  waveformPoints = nextPoints;
+  drawWaveform();
 };
 
 const renderConfig = () => {
@@ -579,7 +699,17 @@ const renderStatus = () => {
         <div class="value">${formatMs(state.metrics.jitter_buffer_depth_ms)}</div>
       </div>
     </div>
+    <div class="waveform-block">
+      <div class="waveform-header">
+        <span>时域波形</span>
+        <span class="waveform-note">20 FPS · 128 点</span>
+      </div>
+      <div class="waveform-shell">
+        <canvas id="waveform-canvas" class="waveform-canvas"></canvas>
+      </div>
+    </div>
   `;
+  ensureWaveformCanvas();
 
   elements.statusParams.innerHTML = `
     <h3>当前生效参数</h3>
@@ -702,11 +832,42 @@ const bindActions = () => {
 const init = async () => {
   bindActions();
   setActiveTab(currentTab);
-  const snapshot = await adapter.getStatus();
-  setState(snapshot);
+  window.addEventListener("resize", () => {
+    resizeWaveformCanvas();
+    drawWaveform();
+  });
+  try {
+    const snapshot = await adapter.getStatus();
+    setState(snapshot);
+  } catch (err) {
+    adapter = createMockAdapter();
+    const snapshot = await adapter.getStatus();
+    setState(snapshot);
+    state.logs.unshift({
+      ts_ms: Date.now(),
+      level: "error",
+      message: `Tauri IPC 初始化失败，已切换模拟模式：${String(err)}`,
+    });
+    state.logs = state.logs.slice(0, 200);
+    render();
+  }
+  if (!isTauri) {
+    state.logs.unshift({
+      ts_ms: Date.now(),
+      level: "warn",
+      message: "未检测到 Tauri API，已进入模拟模式",
+    });
+    state.logs = state.logs.slice(0, 200);
+    render();
+  }
   adapter.onSnapshot((snapshot) => {
     setState(snapshot);
   });
+  if (adapter.onWaveform) {
+    adapter.onWaveform((payload) => {
+      updateWaveform(payload);
+    });
+  }
 };
 
 init();
