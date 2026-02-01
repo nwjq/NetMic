@@ -115,6 +115,7 @@ UI 在 Server 模式下通过 UDP 控制面轮询：
 ## 服务端进程管理（UI 行为）
 - Server 模式点击“启动监听”时，若服务端未运行，UI 会自动拉起服务端进程。
 - Server 模式点击“停止监听”时，若服务端由 UI 启动且 `NETMIC_UI_SERVER_AUTO_STOP=true`，UI 会自动结束该进程。
+- Server 模式点击“启动监听”会先清理其他 `netmic-server` 进程，确保单实例运行。
 
 ## 事件
 - `netmic://snapshot`：UI 订阅后接收 `UiSnapshot` 推送

@@ -1324,6 +1324,7 @@ fn ensure_server_running(state: &SharedState) -> Result<(), String> {
         guard.snapshot.server_config.listen_port
     };
     let server_addr = format!("127.0.0.1:{listen_port}");
+    ensure_single_server_instance(state);
     if send_server_status_request(&server_addr).is_ok() {
         return Ok(());
     }
@@ -1360,6 +1361,29 @@ fn ensure_server_running(state: &SharedState) -> Result<(), String> {
         guard.push_log("warn", "服务端启动中，状态暂未就绪");
     }
     Ok(())
+}
+
+fn ensure_single_server_instance(state: &SharedState) {
+    let mut guard = state.lock().expect("state lock");
+    guard.server_process = None;
+    drop(guard);
+
+    #[cfg(target_family = "unix")]
+    {
+        let status = Command::new("pkill").arg("-f").arg("netmic-server").status();
+        let mut guard = state.lock().expect("state lock");
+        match status {
+            Ok(status) if status.success() => {
+                guard.push_log("warn", "已终止其他服务端进程（确保单实例）");
+            }
+            Ok(_status) => {
+                guard.push_log("info", "未发现其他服务端进程");
+            }
+            Err(err) => {
+                guard.push_log("warn", format!("终止其他服务端进程失败：{err}"));
+            }
+        }
+    }
 }
 
 fn should_auto_stop_server() -> bool {
