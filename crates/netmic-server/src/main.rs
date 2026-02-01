@@ -18,7 +18,8 @@ use anyhow::{Context, Result};
 use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
-    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
+    CONTROL_TYPE_STATS,
     CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
     CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
 };
@@ -26,7 +27,7 @@ use netmic_proto::datagram::{
     split_audio_pcm16_with_header, split_datagram, wrap_control_json, DatagramKind,
 };
 use netmic_proto::protocol::{
-    HandshakeRequest, HandshakeResponse, ServerCommandRequest, ServerCommandResponse,
+    HandshakeRequest, HandshakeResponse, Heartbeat, ServerCommandRequest, ServerCommandResponse,
     ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
 };
 use tracing::{debug, info, warn};
@@ -541,6 +542,28 @@ impl ReceiverContext {
                 busy,
                 "handled handshake request"
             );
+            return Some(wrap_control_json(&payload));
+        }
+
+        if msg_type.as_str() == CONTROL_TYPE_HEARTBEAT {
+            let _heartbeat: Heartbeat = match decode_control_payload(payload_value) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(%addr, %err, "invalid heartbeat payload");
+                    return None;
+                }
+            };
+            if !self.accept_or_lock_client(addr, now) {
+                return None;
+            }
+            let stats = self.metrics.build_stats_snapshot();
+            let payload = match encode_control_message(CONTROL_TYPE_STATS, &stats) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(%addr, %err, "failed to encode stats snapshot");
+                    return None;
+                }
+            };
             return Some(wrap_control_json(&payload));
         }
 

@@ -89,6 +89,8 @@ Server → Client
 - `session_id: String`
 - `seq: u64`
 - `sent_at_ms: u64`
+说明：
+- 服务端收到心跳后会返回 `stats` 控制消息（payload 为 `StatsSnapshot`），用于客户端存活与指标刷新。
 
 ### 统计快照：`StatsSnapshot`
 Server → Client 为主

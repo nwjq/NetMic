@@ -248,6 +248,32 @@ const render = () => {
   renderLogs({ state, elements });
 };
 
+const registerAdapterListeners = () => {
+  if (adapter.onSnapshot) {
+    adapter.onSnapshot((snapshot) => {
+      setState(snapshot);
+    });
+  }
+  if (adapter.onWaveform) {
+    adapter.onWaveform((payload) => {
+      updateWaveform(payload);
+    });
+  }
+};
+
+const startStatusPoller = () => {
+  if (!hasTauri || !adapter.getStatus) return;
+  window.setInterval(async () => {
+    if (getState().mode !== "client") return;
+    try {
+      const snapshot = await adapter.getStatus();
+      setState(snapshot);
+    } catch (_) {
+      // 保持事件驱动为主，轮询失败时不打断 UI。
+    }
+  }, 1500);
+};
+
 const init = async () => {
   bindActions({
     elements,
@@ -263,11 +289,16 @@ const init = async () => {
     resizeWaveformCanvas();
     drawWaveform();
   });
+
+  // 先注册事件监听，避免错过启动阶段的首个 snapshot。
+  registerAdapterListeners();
+
   try {
     const snapshot = await adapter.getStatus();
     setState(snapshot);
   } catch (err) {
     adapter = createMockAdapter();
+    registerAdapterListeners();
     const snapshot = await adapter.getStatus();
     setState(snapshot);
     state.logs.unshift({
@@ -287,15 +318,8 @@ const init = async () => {
     state.logs = state.logs.slice(0, 200);
     render();
   }
-  adapter.onSnapshot((snapshot) => {
-    setState(snapshot);
-  });
-  if (adapter.onWaveform) {
-    adapter.onWaveform((payload) => {
-      updateWaveform(payload);
-    });
-  }
 
+  startStatusPoller();
 };
 
 init();

@@ -5,6 +5,7 @@ use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
+    CONTROL_TYPE_STATS,
     CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
     CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
 };
@@ -18,6 +19,7 @@ use netmic_proto::protocol::{
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -32,6 +34,7 @@ const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
 const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
 const ENV_CLIENT_HEARTBEAT_MS: &str = "NETMIC_CLIENT_HEARTBEAT_MS";
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
+const CLIENT_SERVER_TIMEOUT_MULTIPLIER: u64 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiClientConfig {
@@ -125,6 +128,9 @@ impl ClientSender {
     fn new(target: SenderTarget) -> Result<Self, String> {
         let socket =
             UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|err| format!("set udp nonblocking failed: {err}"))?;
         let heartbeat_interval = heartbeat_interval_from_env();
         let next_heartbeat = heartbeat_interval.map(|interval| Instant::now() + interval);
         Ok(Self {
@@ -179,6 +185,40 @@ impl ClientSender {
             .map(|interval| Instant::now() + interval);
         Ok(())
     }
+
+    fn poll_stats(&mut self) -> Result<Option<StatsSnapshot>, String> {
+        let mut buf = [0_u8; 2048];
+        loop {
+            match self.socket.recv_from(&mut buf) {
+                Ok((len, _addr)) => {
+                    let Some((kind, payload)) = split_datagram(&buf[..len]) else {
+                        continue;
+                    };
+                    if kind != DatagramKind::ControlJson {
+                        continue;
+                    }
+                    let (msg_type, payload_value) = decode_control_message(payload)
+                        .map_err(|err| format!("decode control failed: {err}"))?;
+                    if msg_type.as_str() != CONTROL_TYPE_STATS {
+                        continue;
+                    }
+                    let stats: StatsSnapshot =
+                        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
+                    return Ok(Some(stats));
+                }
+                Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(err) => return Err(format!("recv control failed: {err}")),
+            }
+        }
+    }
+
+    fn timeout_ms(&self) -> Option<u64> {
+        self.heartbeat_interval.map(|interval| {
+            let base = interval.as_millis() as u64;
+            let timeout = base.saturating_mul(CLIENT_SERVER_TIMEOUT_MULTIPLIER);
+            timeout.max(DEFAULT_HEARTBEAT_INTERVAL_MS * 2)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +255,7 @@ struct AppState {
     latest_audio_rms: f32,
     latest_audio_peak: u32,
     sender_target: Option<SenderTarget>,
+    last_server_seen_ms: Option<u64>,
 }
 
 type SharedState = Arc<Mutex<AppState>>;
@@ -325,6 +366,7 @@ impl AppState {
             latest_audio_rms: 0.0,
             latest_audio_peak: 0,
             sender_target: None,
+            last_server_seen_ms: None,
         }
     }
 
@@ -428,6 +470,9 @@ impl AppState {
         let since = self.connected_since.get_or_insert_with(Instant::now);
         let t = since.elapsed().as_secs_f32();
         self.snapshot.runtime.connected_seconds = t.floor() as u64;
+        if self.last_server_seen_ms.is_some() {
+            return;
+        }
         self.snapshot.metrics.rtt_ms = 4.0 + (t.sin().abs() * 6.0);
         self.snapshot.metrics.packet_loss_pct = (t / 2.0).cos().abs() * 1.8;
         self.snapshot.metrics.buffer_depth_ms = 80.0 + (t / 1.8).sin().abs() * 40.0;
@@ -862,8 +907,17 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                 sender = match sender_target.clone() {
                     Some(target) => match ClientSender::new(target.clone()) {
                         Ok(next) => {
-                            let mut guard = state.lock().expect("state lock");
-                            guard.push_log("info", "已开始发送音频数据");
+                            let snapshot = {
+                                let mut guard = state.lock().expect("state lock");
+                                guard.push_log("info", "已开始发送音频数据");
+                                if guard.snapshot.status != "streaming" {
+                                    guard.snapshot.status = "streaming".to_string();
+                                    guard.snapshot.status_note = "推流中（发送中）".to_string();
+                                }
+                                guard.last_server_seen_ms = Some(now_ms());
+                                guard.snapshot.clone()
+                            };
+                            emit_snapshot(&app, &snapshot);
                             Some(next)
                         }
                         Err(err) => {
@@ -948,6 +1002,65 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                     };
                     emit_snapshot(&app, &snapshot);
                     return;
+                }
+
+                let stats = match sender.poll_stats() {
+                    Ok(stats) => stats,
+                    Err(err) => {
+                        let snapshot = {
+                            let mut guard = state.lock().expect("state lock");
+                            guard.snapshot.status = "error".to_string();
+                            guard.snapshot.status_note = "服务端响应失败".to_string();
+                            guard.streaming = false;
+                            guard.connected_since = None;
+                            guard.snapshot.runtime.last_error = Some(format!("服务端响应失败：{err}"));
+                            guard.push_log("error", format!("服务端响应失败：{err}"));
+                            guard.capture_loop = false;
+                            guard.sender_target = None;
+                            guard.last_server_seen_ms = None;
+                            guard.snapshot.clone()
+                        };
+                        emit_snapshot(&app, &snapshot);
+                        return;
+                    }
+                };
+
+                let now = now_ms();
+                let timeout_ms = sender.timeout_ms();
+                let (snapshot, should_emit) = {
+                    let mut guard = state.lock().expect("state lock");
+                    let mut should_emit = false;
+                    if let Some(stats) = stats {
+                        apply_stats_to_metrics(&stats, &mut guard.snapshot.metrics);
+                        guard.last_server_seen_ms = Some(now);
+                        if guard.snapshot.status != "streaming" {
+                            guard.snapshot.status = "streaming".to_string();
+                            guard.snapshot.status_note = "推流中（服务端已响应）".to_string();
+                        }
+                        should_emit = true;
+                    }
+
+                    if let (Some(timeout_ms), Some(last_seen)) =
+                        (timeout_ms, guard.last_server_seen_ms)
+                    {
+                        if now.saturating_sub(last_seen) > timeout_ms {
+                            guard.snapshot.status = "error".to_string();
+                            guard.snapshot.status_note = "服务端无响应".to_string();
+                            guard.streaming = false;
+                            guard.connected_since = None;
+                            guard.snapshot.runtime.last_error = Some("服务端无响应".to_string());
+                            guard.push_log("error", "服务端无响应，已停止推流");
+                            guard.capture_loop = false;
+                            guard.sender_target = None;
+                            guard.last_server_seen_ms = None;
+                            should_emit = true;
+                        }
+                    }
+
+                    (guard.snapshot.clone(), should_emit)
+                };
+                if should_emit {
+                    emit_snapshot(&app, &snapshot);
                 }
             }
         }
@@ -1335,12 +1448,14 @@ fn apply_handshake_outcome(
                 server_addr: server_addr.to_string(),
                 session_id: response.session_id.clone(),
             });
+            state.last_server_seen_ms = None;
             state.push_log("info", "握手成功，已进入推流状态");
             true
         }
         Ok(response) if response.busy => {
             state.streaming = false;
             state.sender_target = None;
+            state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = "握手失败：服务端忙".to_string();
             state.snapshot.runtime.peer_addr = None;
@@ -1354,6 +1469,7 @@ fn apply_handshake_outcome(
         Ok(response) => {
             state.streaming = false;
             state.sender_target = None;
+            state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             let reason = response
                 .reason
@@ -1371,6 +1487,7 @@ fn apply_handshake_outcome(
         Err(err) => {
             state.streaming = false;
             state.sender_target = None;
+            state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = format!("握手失败：{err}");
             state.snapshot.runtime.peer_addr = None;
@@ -1392,6 +1509,7 @@ fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
     guard.snapshot.runtime.peer_addr = None;
     guard.snapshot.runtime.connected_seconds = 0;
     guard.sender_target = None;
+    guard.last_server_seen_ms = None;
     guard.snapshot.runtime.mic_permission = if mode == "server" {
         "不适用".to_string()
     } else {
@@ -1454,6 +1572,7 @@ fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
     guard.capture_loop = false;
     guard.server_monitor_loop = false;
     guard.sender_target = None;
+    guard.last_server_seen_ms = None;
     guard.connected_since = None;
     guard.latest_audio_rms = 0.0;
     guard.latest_audio_peak = 0;
@@ -1470,6 +1589,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
     let mode = guard.snapshot.mode.clone();
     guard.streaming = true;
     guard.sender_target = None;
+    guard.last_server_seen_ms = None;
     guard.connected_since = None;
     guard.snapshot.runtime.connected_seconds = 0;
     guard.snapshot.runtime.last_error = None;
@@ -1488,6 +1608,7 @@ fn apply_stop(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     guard.streaming = false;
     guard.sender_target = None;
+    guard.last_server_seen_ms = None;
     guard.snapshot.status = "idle".to_string();
     guard.snapshot.status_note = "已停止".to_string();
     guard.snapshot.runtime.peer_addr = None;
