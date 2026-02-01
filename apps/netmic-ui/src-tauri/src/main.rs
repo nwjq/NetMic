@@ -4,14 +4,16 @@ use netmic_client::{list_input_devices, AudioPipeline, CaptureError};
 use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
-    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE,
+    CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
     CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
     CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
 };
-use netmic_proto::datagram::{split_datagram, wrap_control_json, DatagramKind};
+use netmic_proto::datagram::{
+    split_datagram, wrap_audio_pcm16_with_header, wrap_control_json, DatagramKind,
+};
 use netmic_proto::protocol::{
-    HandshakeRequest, HandshakeResponse, ServerCommandRequest, ServerCommandResponse,
-    ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
+    AudioFrameHeader, HandshakeRequest, HandshakeResponse, Heartbeat, ServerCommandRequest,
+    ServerCommandResponse, ServerStatusRequest, ServerStatusResponse, SessionParams, StatsSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -28,6 +30,8 @@ const EVENT_WAVEFORM: &str = "netmic://waveform";
 const SERVER_STATUS_POLL_MS: u64 = 1_000;
 const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
 const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
+const ENV_CLIENT_HEARTBEAT_MS: &str = "NETMIC_CLIENT_HEARTBEAT_MS";
+const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiClientConfig {
@@ -102,6 +106,81 @@ struct UiWaveform {
     points: Vec<f32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SenderTarget {
+    server_addr: String,
+    session_id: String,
+}
+
+struct ClientSender {
+    socket: UdpSocket,
+    target: SenderTarget,
+    seq: u64,
+    heartbeat_interval: Option<Duration>,
+    next_heartbeat: Option<Instant>,
+    heartbeat_seq: u64,
+}
+
+impl ClientSender {
+    fn new(target: SenderTarget) -> Result<Self, String> {
+        let socket =
+            UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
+        let heartbeat_interval = heartbeat_interval_from_env();
+        let next_heartbeat = heartbeat_interval.map(|interval| Instant::now() + interval);
+        Ok(Self {
+            socket,
+            target,
+            seq: 0,
+            heartbeat_interval,
+            next_heartbeat,
+            heartbeat_seq: 0,
+        })
+    }
+
+    fn send_frame(&mut self, frame: &netmic_client::Pcm16Frame) -> Result<(), String> {
+        let payload = frame.to_bytes();
+        let frame_samples = (frame.samples.len() as u32) / (frame.channels as u32).max(1);
+        let header = AudioFrameHeader {
+            session_id: self.target.session_id.clone(),
+            seq: self.seq,
+            timestamp_ms: now_ms(),
+            frame_samples,
+        };
+        let datagram = wrap_audio_pcm16_with_header(&header, &payload)
+            .map_err(|err| format!("build audio datagram failed: {err}"))?;
+        self.socket
+            .send_to(&datagram, &self.target.server_addr)
+            .map_err(|err| format!("send audio datagram failed: {err}"))?;
+        self.seq = self.seq.saturating_add(1);
+        self.maybe_send_heartbeat()
+    }
+
+    fn maybe_send_heartbeat(&mut self) -> Result<(), String> {
+        let Some(next) = self.next_heartbeat else {
+            return Ok(());
+        };
+        if Instant::now() < next {
+            return Ok(());
+        }
+        let heartbeat = Heartbeat {
+            session_id: self.target.session_id.clone(),
+            seq: self.heartbeat_seq,
+            sent_at_ms: now_ms(),
+        };
+        let payload = encode_control_message(CONTROL_TYPE_HEARTBEAT, &heartbeat)
+            .map_err(|err| format!("encode heartbeat failed: {err}"))?;
+        let datagram = wrap_control_json(&payload);
+        self.socket
+            .send_to(&datagram, &self.target.server_addr)
+            .map_err(|err| format!("send heartbeat failed: {err}"))?;
+        self.heartbeat_seq = self.heartbeat_seq.saturating_add(1);
+        self.next_heartbeat = self
+            .heartbeat_interval
+            .map(|interval| Instant::now() + interval);
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiSnapshot {
     mode: String,
@@ -135,6 +214,7 @@ struct AppState {
     connected_since: Option<Instant>,
     latest_audio_rms: f32,
     latest_audio_peak: u32,
+    sender_target: Option<SenderTarget>,
 }
 
 type SharedState = Arc<Mutex<AppState>>;
@@ -244,6 +324,7 @@ impl AppState {
             connected_since: None,
             latest_audio_rms: 0.0,
             latest_audio_peak: 0,
+            sender_target: None,
         }
     }
 
@@ -713,50 +794,24 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
     }
 
     std::thread::spawn(move || {
-        let (params, input_device) = {
-            let guard = state.lock().expect("state lock");
-            (
-                guard.snapshot.effective.clone(),
-                guard.snapshot.client_config.input_device.clone(),
-            )
-        };
-
-        let device_name = if input_device == "系统默认" {
-            None
-        } else {
-            Some(input_device.as_str())
-        };
-
-        let mut pipeline = match AudioPipeline::new_with_device(&params, device_name) {
-            Ok(pipeline) => pipeline,
-            Err(err) => {
-                let snapshot = {
-                    let mut guard = state.lock().expect("state lock");
-                    guard.snapshot.status = "error".to_string();
-                    guard.snapshot.status_note = "麦克风采集失败".to_string();
-                    guard.streaming = false;
-                    guard.connected_since = None;
-                    guard.latest_audio_rms = 0.0;
-                    guard.latest_audio_peak = 0;
-                    guard.snapshot.runtime.last_error = Some(format!("采集初始化失败：{err}"));
-                    guard.snapshot.runtime.mic_permission =
-                        permission_label_from_error(&err).to_string();
-                    guard.push_log("error", format!("采集初始化失败：{err}"));
-                    guard.capture_loop = false;
-                    guard.snapshot.clone()
-                };
-                emit_snapshot(&app, &snapshot);
-                return;
-            }
-        };
-
+        let mut pipeline: Option<AudioPipeline> = None;
+        let mut active_params: Option<SessionParams> = None;
+        let mut active_device: Option<String> = None;
+        let mut sender: Option<ClientSender> = None;
+        let mut active_target: Option<SenderTarget> = None;
         let waveform_interval = Duration::from_millis(50);
         let mut last_emit = Instant::now() - waveform_interval;
 
         loop {
-            let (streaming, mode) = {
+            let (streaming, mode, params, input_device, sender_target) = {
                 let guard = state.lock().expect("state lock");
-                (guard.streaming, guard.snapshot.mode.clone())
+                (
+                    guard.streaming,
+                    guard.snapshot.mode.clone(),
+                    guard.snapshot.effective.clone(),
+                    guard.snapshot.client_config.input_device.clone(),
+                    guard.sender_target.clone(),
+                )
             };
             if !streaming || mode != "client" {
                 let mut guard = state.lock().expect("state lock");
@@ -764,7 +819,79 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                 return;
             }
 
-            let frame = match pipeline.next_frame() {
+            let should_rebuild = pipeline.is_none()
+                || active_params.as_ref() != Some(&params)
+                || active_device.as_deref() != Some(input_device.as_str());
+            if should_rebuild {
+                let device_name = if input_device == "系统默认" {
+                    None
+                } else {
+                    Some(input_device.as_str())
+                };
+                match AudioPipeline::new_with_device(&params, device_name) {
+                    Ok(next) => {
+                        pipeline = Some(next);
+                        active_params = Some(params.clone());
+                        active_device = Some(input_device.clone());
+                    }
+                    Err(err) => {
+                        let snapshot = {
+                            let mut guard = state.lock().expect("state lock");
+                            guard.snapshot.status = "error".to_string();
+                            guard.snapshot.status_note = "麦克风采集失败".to_string();
+                            guard.streaming = false;
+                            guard.connected_since = None;
+                            guard.latest_audio_rms = 0.0;
+                            guard.latest_audio_peak = 0;
+                            guard.snapshot.runtime.last_error =
+                                Some(format!("采集初始化失败：{err}"));
+                            guard.snapshot.runtime.mic_permission =
+                                permission_label_from_error(&err).to_string();
+                            guard.push_log("error", format!("采集初始化失败：{err}"));
+                            guard.capture_loop = false;
+                            guard.sender_target = None;
+                            guard.snapshot.clone()
+                        };
+                        emit_snapshot(&app, &snapshot);
+                        return;
+                    }
+                }
+            }
+
+            if sender_target != active_target {
+                sender = match sender_target.clone() {
+                    Some(target) => match ClientSender::new(target.clone()) {
+                        Ok(next) => {
+                            let mut guard = state.lock().expect("state lock");
+                            guard.push_log("info", "已开始发送音频数据");
+                            Some(next)
+                        }
+                        Err(err) => {
+                            let snapshot = {
+                                let mut guard = state.lock().expect("state lock");
+                                guard.snapshot.status = "error".to_string();
+                                guard.snapshot.status_note = "网络发送失败".to_string();
+                                guard.streaming = false;
+                                guard.connected_since = None;
+                                guard.latest_audio_rms = 0.0;
+                                guard.latest_audio_peak = 0;
+                                guard.snapshot.runtime.last_error =
+                                    Some(format!("发送初始化失败：{err}"));
+                                guard.push_log("error", format!("发送初始化失败：{err}"));
+                                guard.capture_loop = false;
+                                guard.sender_target = None;
+                                guard.snapshot.clone()
+                            };
+                            emit_snapshot(&app, &snapshot);
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+                active_target = sender_target;
+            }
+
+            let frame = match pipeline.as_mut().expect("pipeline ready").next_frame() {
                 Ok(frame) => frame,
                 Err(err) => {
                     let snapshot = {
@@ -778,6 +905,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                         guard.snapshot.runtime.last_error = Some(format!("采集失败：{err}"));
                         guard.push_log("error", format!("采集失败：{err}"));
                         guard.capture_loop = false;
+                        guard.sender_target = None;
                         guard.snapshot.clone()
                     };
                     emit_snapshot(&app, &snapshot);
@@ -802,6 +930,25 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                 };
                 emit_waveform(&app, &waveform);
                 last_emit = Instant::now();
+            }
+
+            if let Some(sender) = sender.as_mut() {
+                if let Err(err) = sender.send_frame(&frame) {
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.snapshot.status = "error".to_string();
+                        guard.snapshot.status_note = "网络发送失败".to_string();
+                        guard.streaming = false;
+                        guard.connected_since = None;
+                        guard.snapshot.runtime.last_error = Some(format!("发送失败：{err}"));
+                        guard.push_log("error", format!("发送失败：{err}"));
+                        guard.capture_loop = false;
+                        guard.sender_target = None;
+                        guard.snapshot.clone()
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    return;
+                }
             }
         }
     });
@@ -1184,11 +1331,16 @@ fn apply_handshake_outcome(
             state.snapshot.status_note = "推流中（握手成功）".to_string();
             state.snapshot.runtime.peer_addr = Some(server_addr.to_string());
             state.snapshot.runtime.last_error = None;
+            state.sender_target = Some(SenderTarget {
+                server_addr: server_addr.to_string(),
+                session_id: response.session_id.clone(),
+            });
             state.push_log("info", "握手成功，已进入推流状态");
             true
         }
         Ok(response) if response.busy => {
             state.streaming = false;
+            state.sender_target = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = "握手失败：服务端忙".to_string();
             state.snapshot.runtime.peer_addr = None;
@@ -1201,6 +1353,7 @@ fn apply_handshake_outcome(
         }
         Ok(response) => {
             state.streaming = false;
+            state.sender_target = None;
             state.snapshot.status = "error".to_string();
             let reason = response
                 .reason
@@ -1217,6 +1370,7 @@ fn apply_handshake_outcome(
         }
         Err(err) => {
             state.streaming = false;
+            state.sender_target = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = format!("握手失败：{err}");
             state.snapshot.runtime.peer_addr = None;
@@ -1237,6 +1391,7 @@ fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
     guard.snapshot.status_note = "准备就绪".to_string();
     guard.snapshot.runtime.peer_addr = None;
     guard.snapshot.runtime.connected_seconds = 0;
+    guard.sender_target = None;
     guard.snapshot.runtime.mic_permission = if mode == "server" {
         "不适用".to_string()
     } else {
@@ -1298,6 +1453,7 @@ fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
     guard.metrics_loop = false;
     guard.capture_loop = false;
     guard.server_monitor_loop = false;
+    guard.sender_target = None;
     guard.connected_since = None;
     guard.latest_audio_rms = 0.0;
     guard.latest_audio_peak = 0;
@@ -1313,6 +1469,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     let mode = guard.snapshot.mode.clone();
     guard.streaming = true;
+    guard.sender_target = None;
     guard.connected_since = None;
     guard.snapshot.runtime.connected_seconds = 0;
     guard.snapshot.runtime.last_error = None;
@@ -1330,6 +1487,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
 fn apply_stop(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     guard.streaming = false;
+    guard.sender_target = None;
     guard.snapshot.status = "idle".to_string();
     guard.snapshot.status_note = "已停止".to_string();
     guard.snapshot.runtime.peer_addr = None;
@@ -1429,6 +1587,17 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_millis() as u64
+}
+
+fn heartbeat_interval_from_env() -> Option<Duration> {
+    match env::var(ENV_CLIENT_HEARTBEAT_MS) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(0) => None,
+            Ok(ms) => Some(Duration::from_millis(ms)),
+            Err(_) => Some(Duration::from_millis(DEFAULT_HEARTBEAT_INTERVAL_MS)),
+        },
+        Err(_) => Some(Duration::from_millis(DEFAULT_HEARTBEAT_INTERVAL_MS)),
+    }
 }
 
 fn build_waveform(samples: &[i16], points: usize) -> (Vec<f32>, f32, u32) {
