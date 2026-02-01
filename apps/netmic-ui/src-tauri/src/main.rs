@@ -1310,7 +1310,6 @@ fn refresh_server_status(state: &SharedState) -> Option<UiSnapshot> {
             } else if prev_error.is_some() {
                 let message = format!("服务端状态拉取已恢复（{server_addr}）");
                 guard.push_log("info", message.clone());
-                eprintln!("[netmic-ui] {message}");
             }
         }
         Err(err) => {
