@@ -109,15 +109,10 @@ struct UiWaveform {
     points: Vec<f32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SenderTarget {
-    server_addr: String,
-    session_id: String,
-}
-
 struct ClientSender {
     socket: UdpSocket,
-    target: SenderTarget,
+    server_addr: String,
+    session_id: Option<String>,
     seq: u64,
     heartbeat_interval: Option<Duration>,
     next_heartbeat: Option<Instant>,
@@ -125,7 +120,7 @@ struct ClientSender {
 }
 
 impl ClientSender {
-    fn new(target: SenderTarget) -> Result<Self, String> {
+    fn new(server_addr: String) -> Result<Self, String> {
         let socket =
             UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
         socket
@@ -135,7 +130,8 @@ impl ClientSender {
         let next_heartbeat = heartbeat_interval.map(|interval| Instant::now() + interval);
         Ok(Self {
             socket,
-            target,
+            server_addr,
+            session_id: None,
             seq: 0,
             heartbeat_interval,
             next_heartbeat,
@@ -143,11 +139,61 @@ impl ClientSender {
         })
     }
 
+    fn perform_handshake(
+        &mut self,
+        request: &HandshakeRequest,
+        timeout: Duration,
+    ) -> Result<HandshakeResponse, String> {
+        let payload = encode_control_message(CONTROL_TYPE_HANDSHAKE_REQUEST, request)
+            .map_err(|err| format!("encode handshake request failed: {err}"))?;
+        let datagram = wrap_control_json(&payload);
+        self.socket
+            .send_to(&datagram, &self.server_addr)
+            .map_err(|err| format!("send handshake request failed: {err}"))?;
+
+        let mut buf = [0_u8; 2048];
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.socket.recv_from(&mut buf) {
+                Ok((len, _addr)) => {
+                    let (kind, payload) =
+                        split_datagram(&buf[..len]).ok_or("invalid handshake datagram")?;
+                    if kind != DatagramKind::ControlJson {
+                        continue;
+                    }
+                    let (msg_type, payload_value) =
+                        decode_control_message(payload).map_err(|err| format!("{err}"))?;
+                    if msg_type.as_str() != CONTROL_TYPE_HANDSHAKE_RESPONSE {
+                        continue;
+                    }
+                    let response: HandshakeResponse =
+                        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
+                    if response.session_id != request.session_id {
+                        continue;
+                    }
+                    self.session_id = Some(response.session_id.clone());
+                    return Ok(response);
+                }
+                Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err("recv handshake response failed: timeout".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => return Err(format!("recv handshake response failed: {err}")),
+            }
+        }
+    }
+
     fn send_frame(&mut self, frame: &netmic_client::Pcm16Frame) -> Result<(), String> {
+        let session_id = self
+            .session_id
+            .as_ref()
+            .ok_or_else(|| "handshake not completed".to_string())?;
         let payload = frame.to_bytes();
         let frame_samples = (frame.samples.len() as u32) / (frame.channels as u32).max(1);
         let header = AudioFrameHeader {
-            session_id: self.target.session_id.clone(),
+            session_id: session_id.clone(),
             seq: self.seq,
             timestamp_ms: now_ms(),
             frame_samples,
@@ -155,7 +201,7 @@ impl ClientSender {
         let datagram = wrap_audio_pcm16_with_header(&header, &payload)
             .map_err(|err| format!("build audio datagram failed: {err}"))?;
         self.socket
-            .send_to(&datagram, &self.target.server_addr)
+            .send_to(&datagram, &self.server_addr)
             .map_err(|err| format!("send audio datagram failed: {err}"))?;
         self.seq = self.seq.saturating_add(1);
         self.maybe_send_heartbeat()
@@ -168,8 +214,12 @@ impl ClientSender {
         if Instant::now() < next {
             return Ok(());
         }
+        let session_id = self
+            .session_id
+            .as_ref()
+            .ok_or_else(|| "handshake not completed".to_string())?;
         let heartbeat = Heartbeat {
-            session_id: self.target.session_id.clone(),
+            session_id: session_id.clone(),
             seq: self.heartbeat_seq,
             sent_at_ms: now_ms(),
         };
@@ -177,7 +227,7 @@ impl ClientSender {
             .map_err(|err| format!("encode heartbeat failed: {err}"))?;
         let datagram = wrap_control_json(&payload);
         self.socket
-            .send_to(&datagram, &self.target.server_addr)
+            .send_to(&datagram, &self.server_addr)
             .map_err(|err| format!("send heartbeat failed: {err}"))?;
         self.heartbeat_seq = self.heartbeat_seq.saturating_add(1);
         self.next_heartbeat = self
@@ -254,7 +304,7 @@ struct AppState {
     connected_since: Option<Instant>,
     latest_audio_rms: f32,
     latest_audio_peak: u32,
-    sender_target: Option<SenderTarget>,
+    pending_sender: Option<ClientSender>,
     last_server_seen_ms: Option<u64>,
 }
 
@@ -365,7 +415,7 @@ impl AppState {
             connected_since: None,
             latest_audio_rms: 0.0,
             latest_audio_peak: 0,
-            sender_target: None,
+            pending_sender: None,
             last_server_seen_ms: None,
         }
     }
@@ -607,13 +657,37 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
                 (server_addr, request)
             };
 
-            let response = perform_handshake(&server_addr, &request);
+            let mut sender = match ClientSender::new(server_addr.clone()) {
+                Ok(sender) => sender,
+                Err(err) => {
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.snapshot.status = "error".to_string();
+                        guard.snapshot.status_note = "网络发送失败".to_string();
+                        guard.streaming = false;
+                        guard.connected_since = None;
+                        guard.snapshot.runtime.last_error = Some(format!("发送初始化失败：{err}"));
+                        guard.push_log("error", format!("发送初始化失败：{err}"));
+                        guard.capture_loop = false;
+                        guard.pending_sender = None;
+                        guard.last_server_seen_ms = None;
+                        guard.snapshot.clone()
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    return;
+                }
+            };
+
+            let response = sender.perform_handshake(&request, Duration::from_millis(1200));
             let (snapshot, accepted) = {
                 let mut guard = state.lock().expect("state lock");
                 if !guard.streaming || guard.snapshot.mode != "client" {
                     return;
                 }
                 let accepted = apply_handshake_outcome(&mut guard, &server_addr, response);
+                if accepted {
+                    guard.pending_sender = Some(sender);
+                }
                 (guard.snapshot.clone(), accepted)
             };
             if accepted {
@@ -843,19 +917,18 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
         let mut active_params: Option<SessionParams> = None;
         let mut active_device: Option<String> = None;
         let mut sender: Option<ClientSender> = None;
-        let mut active_target: Option<SenderTarget> = None;
         let waveform_interval = Duration::from_millis(50);
         let mut last_emit = Instant::now() - waveform_interval;
 
         loop {
-            let (streaming, mode, params, input_device, sender_target) = {
-                let guard = state.lock().expect("state lock");
+            let (streaming, mode, params, input_device, pending_sender) = {
+                let mut guard = state.lock().expect("state lock");
                 (
                     guard.streaming,
                     guard.snapshot.mode.clone(),
                     guard.snapshot.effective.clone(),
                     guard.snapshot.client_config.input_device.clone(),
-                    guard.sender_target.clone(),
+                    guard.pending_sender.take(),
                 )
             };
             if !streaming || mode != "client" {
@@ -894,7 +967,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                                 permission_label_from_error(&err).to_string();
                             guard.push_log("error", format!("采集初始化失败：{err}"));
                             guard.capture_loop = false;
-                            guard.sender_target = None;
+                            guard.pending_sender = None;
                             guard.snapshot.clone()
                         };
                         emit_snapshot(&app, &snapshot);
@@ -903,46 +976,19 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                 }
             }
 
-            if sender_target != active_target {
-                sender = match sender_target.clone() {
-                    Some(target) => match ClientSender::new(target.clone()) {
-                        Ok(next) => {
-                            let snapshot = {
-                                let mut guard = state.lock().expect("state lock");
-                                guard.push_log("info", "已开始发送音频数据");
-                                if guard.snapshot.status != "streaming" {
-                                    guard.snapshot.status = "streaming".to_string();
-                                    guard.snapshot.status_note = "推流中（发送中）".to_string();
-                                }
-                                guard.last_server_seen_ms = Some(now_ms());
-                                guard.snapshot.clone()
-                            };
-                            emit_snapshot(&app, &snapshot);
-                            Some(next)
-                        }
-                        Err(err) => {
-                            let snapshot = {
-                                let mut guard = state.lock().expect("state lock");
-                                guard.snapshot.status = "error".to_string();
-                                guard.snapshot.status_note = "网络发送失败".to_string();
-                                guard.streaming = false;
-                                guard.connected_since = None;
-                                guard.latest_audio_rms = 0.0;
-                                guard.latest_audio_peak = 0;
-                                guard.snapshot.runtime.last_error =
-                                    Some(format!("发送初始化失败：{err}"));
-                                guard.push_log("error", format!("发送初始化失败：{err}"));
-                                guard.capture_loop = false;
-                                guard.sender_target = None;
-                                guard.snapshot.clone()
-                            };
-                            emit_snapshot(&app, &snapshot);
-                            return;
-                        }
-                    },
-                    None => None,
+            if let Some(next) = pending_sender {
+                let snapshot = {
+                    let mut guard = state.lock().expect("state lock");
+                    guard.push_log("info", "已开始发送音频数据");
+                    if guard.snapshot.status != "streaming" {
+                        guard.snapshot.status = "streaming".to_string();
+                        guard.snapshot.status_note = "推流中（发送中）".to_string();
+                    }
+                    guard.last_server_seen_ms = Some(now_ms());
+                    guard.snapshot.clone()
                 };
-                active_target = sender_target;
+                emit_snapshot(&app, &snapshot);
+                sender = Some(next);
             }
 
             let frame = match pipeline.as_mut().expect("pipeline ready").next_frame() {
@@ -959,7 +1005,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                         guard.snapshot.runtime.last_error = Some(format!("采集失败：{err}"));
                         guard.push_log("error", format!("采集失败：{err}"));
                         guard.capture_loop = false;
-                        guard.sender_target = None;
+                        guard.pending_sender = None;
                         guard.snapshot.clone()
                     };
                     emit_snapshot(&app, &snapshot);
@@ -997,7 +1043,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                         guard.snapshot.runtime.last_error = Some(format!("发送失败：{err}"));
                         guard.push_log("error", format!("发送失败：{err}"));
                         guard.capture_loop = false;
-                        guard.sender_target = None;
+                        guard.pending_sender = None;
                         guard.snapshot.clone()
                     };
                     emit_snapshot(&app, &snapshot);
@@ -1016,7 +1062,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                             guard.snapshot.runtime.last_error = Some(format!("服务端响应失败：{err}"));
                             guard.push_log("error", format!("服务端响应失败：{err}"));
                             guard.capture_loop = false;
-                            guard.sender_target = None;
+                            guard.pending_sender = None;
                             guard.last_server_seen_ms = None;
                             guard.snapshot.clone()
                         };
@@ -1051,7 +1097,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                             guard.snapshot.runtime.last_error = Some("服务端无响应".to_string());
                             guard.push_log("error", "服务端无响应，已停止推流");
                             guard.capture_loop = false;
-                            guard.sender_target = None;
+                            guard.pending_sender = None;
                             guard.last_server_seen_ms = None;
                             should_emit = true;
                         }
@@ -1140,44 +1186,6 @@ fn build_handshake_request(config: &UiClientConfig) -> HandshakeRequest {
             Some(config.pairing_token.clone())
         },
     }
-}
-
-fn perform_handshake(
-    server_addr: &str,
-    request: &HandshakeRequest,
-) -> Result<HandshakeResponse, String> {
-    let socket =
-        UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
-    socket
-        .set_read_timeout(Some(Duration::from_millis(1_200)))
-        .map_err(|err| format!("set udp timeout failed: {err}"))?;
-
-    let payload = encode_control_message(CONTROL_TYPE_HANDSHAKE_REQUEST, request)
-        .map_err(|err| format!("encode handshake request failed: {err}"))?;
-    let datagram = wrap_control_json(&payload);
-    socket
-        .send_to(&datagram, server_addr)
-        .map_err(|err| format!("send handshake request failed: {err}"))?;
-
-    let mut buf = [0_u8; 2048];
-    let (len, _addr) = socket
-        .recv_from(&mut buf)
-        .map_err(|err| format!("recv handshake response failed: {err}"))?;
-    let (kind, payload) = split_datagram(&buf[..len]).ok_or("invalid handshake datagram")?;
-    if kind != DatagramKind::ControlJson {
-        return Err("unexpected handshake response kind".to_string());
-    }
-    let (msg_type, payload_value) =
-        decode_control_message(payload).map_err(|err| format!("{err}"))?;
-    if msg_type.as_str() != CONTROL_TYPE_HANDSHAKE_RESPONSE {
-        return Err(format!("unexpected handshake response type: {msg_type}"));
-    }
-    let response: HandshakeResponse =
-        decode_control_payload(payload_value).map_err(|err| format!("{err}"))?;
-    if response.session_id != request.session_id {
-        return Err("handshake response session mismatch".to_string());
-    }
-    Ok(response)
 }
 
 fn send_server_status_request(server_addr: &str) -> Result<ServerStatusResponse, String> {
@@ -1468,17 +1476,14 @@ fn apply_handshake_outcome(
             state.snapshot.status_note = "推流中（握手成功）".to_string();
             state.snapshot.runtime.peer_addr = Some(server_addr.to_string());
             state.snapshot.runtime.last_error = None;
-            state.sender_target = Some(SenderTarget {
-                server_addr: server_addr.to_string(),
-                session_id: response.session_id.clone(),
-            });
+            state.pending_sender = None;
             state.last_server_seen_ms = None;
             state.push_log("info", "握手成功，已进入推流状态");
             true
         }
         Ok(response) if response.busy => {
             state.streaming = false;
-            state.sender_target = None;
+            state.pending_sender = None;
             state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = "握手失败：服务端忙".to_string();
@@ -1492,7 +1497,7 @@ fn apply_handshake_outcome(
         }
         Ok(response) => {
             state.streaming = false;
-            state.sender_target = None;
+            state.pending_sender = None;
             state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             let reason = response
@@ -1510,7 +1515,7 @@ fn apply_handshake_outcome(
         }
         Err(err) => {
             state.streaming = false;
-            state.sender_target = None;
+            state.pending_sender = None;
             state.last_server_seen_ms = None;
             state.snapshot.status = "error".to_string();
             state.snapshot.status_note = format!("握手失败：{err}");
@@ -1532,7 +1537,7 @@ fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
     guard.snapshot.status_note = "准备就绪".to_string();
     guard.snapshot.runtime.peer_addr = None;
     guard.snapshot.runtime.connected_seconds = 0;
-    guard.sender_target = None;
+    guard.pending_sender = None;
     guard.last_server_seen_ms = None;
     guard.snapshot.runtime.mic_permission = if mode == "server" {
         "不适用".to_string()
@@ -1595,7 +1600,7 @@ fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
     guard.metrics_loop = false;
     guard.capture_loop = false;
     guard.server_monitor_loop = false;
-    guard.sender_target = None;
+    guard.pending_sender = None;
     guard.last_server_seen_ms = None;
     guard.connected_since = None;
     guard.latest_audio_rms = 0.0;
@@ -1612,7 +1617,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     let mode = guard.snapshot.mode.clone();
     guard.streaming = true;
-    guard.sender_target = None;
+    guard.pending_sender = None;
     guard.last_server_seen_ms = None;
     guard.connected_since = None;
     guard.snapshot.runtime.connected_seconds = 0;
@@ -1631,7 +1636,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
 fn apply_stop(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     guard.streaming = false;
-    guard.sender_target = None;
+    guard.pending_sender = None;
     guard.last_server_seen_ms = None;
     guard.snapshot.status = "idle".to_string();
     guard.snapshot.status_note = "已停止".to_string();

@@ -514,7 +514,10 @@ impl ReceiverContext {
                 }
             };
 
-            let accepted = self.accept_or_lock_client(addr, now);
+            let accepted = match self.active_client {
+                Some(current) => current == addr,
+                None => true,
+            };
             let normalize = normalize_session_params(&request.requested);
             let (busy, reason) = if accepted {
                 (false, None)
