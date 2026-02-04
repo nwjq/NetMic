@@ -157,9 +157,59 @@ const mergeSnapshot = (current, next) => {
   return merged;
 };
 
-const setState = (snapshot) => {
+const captureConfigFocus = () => {
+  const active = document.activeElement;
+  if (!active || !active.matches || !active.matches("[data-field]")) return null;
+  const field = active.dataset?.field;
+  if (!field) return null;
+  return {
+    field,
+    type: active.type,
+    value: active.value,
+    checked: active.checked,
+    selectionStart: typeof active.selectionStart === "number" ? active.selectionStart : null,
+    selectionEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+  };
+};
+
+const restoreConfigFocus = (focusInfo) => {
+  if (!focusInfo || !focusInfo.field) return;
+  const target = document.querySelector(`[data-field="${focusInfo.field}"]`);
+  if (!target || target.disabled) return;
+  if (focusInfo.type === "checkbox") {
+    target.checked = Boolean(focusInfo.checked);
+  } else if (typeof focusInfo.value === "string") {
+    target.value = focusInfo.value;
+  }
+  if (target.focus) {
+    target.focus({ preventScroll: true });
+  }
+  if (
+    typeof focusInfo.selectionStart === "number" &&
+    typeof focusInfo.selectionEnd === "number" &&
+    target.setSelectionRange
+  ) {
+    target.setSelectionRange(focusInfo.selectionStart, focusInfo.selectionEnd);
+  }
+};
+
+const isConfigEditing = () => {
+  if (document.querySelector("[data-field]:focus")) return true;
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active.matches && active.matches("[data-field]")) return true;
+  if (active.closest) {
+    return Boolean(active.closest("[data-field]"));
+  }
+  return false;
+};
+
+const setState = (snapshot, options = {}) => {
+  const focusInfo = captureConfigFocus();
   state = mergeSnapshot(state, snapshot);
-  render();
+  const skipConfig = options.skipConfig ?? isConfigEditing();
+  render({ skipConfig });
+  restoreConfigFocus(focusInfo);
 };
 
 const setActiveTab = (tab) => {
@@ -226,24 +276,26 @@ const updateWaveform = (payload) => {
   drawWaveform();
 };
 
-const render = () => {
+const render = ({ skipConfig = false } = {}) => {
   renderModeButtons({ state, elements, isBusy });
   renderStatusPill({ state, elements });
   renderPrimaryAction({ state, elements, isBusy });
-  renderConfig({
-    state,
-    elements,
-    isBusy,
-    sampleRates,
-    chunkOptions,
-    bufferOptions,
-  });
-  bindConfigInputs({
-    root: document,
-    getState,
-    setState,
-    adapter,
-  });
+  if (!skipConfig) {
+    renderConfig({
+      state,
+      elements,
+      isBusy,
+      sampleRates,
+      chunkOptions,
+      bufferOptions,
+    });
+    bindConfigInputs({
+      root: document,
+      getState,
+      setState,
+      adapter,
+    });
+  }
   renderStatus({ state, elements, ensureWaveformCanvas });
   renderLogs({ state, elements });
 };
@@ -267,7 +319,7 @@ const startStatusPoller = () => {
     if (getState().mode !== "client") return;
     try {
       const snapshot = await adapter.getStatus();
-      setState(snapshot);
+      setState(snapshot, { skipConfig: true });
     } catch (_) {
       // 保持事件驱动为主，轮询失败时不打断 UI。
     }
