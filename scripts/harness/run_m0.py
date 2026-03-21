@@ -31,6 +31,7 @@ DEFAULT_SERVER_PORT = 43000
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 UI_POLL_INTERVAL_MS = 1000
 DEFAULT_REMOTE_TIMEOUT_SEC = 120
+REMOTE_RUNTIME_PAD_SEC = 30
 SYNC_EXCLUDES = (
     ".git/",
     ".harness/hosts.env",
@@ -284,6 +285,13 @@ def remote_timeout_sec(env: Dict[str, str]) -> int:
     return max(5, value)
 
 
+def remote_timeout_for_runtime(env: Dict[str, str], runtime_sec: int) -> int:
+    base_timeout = remote_timeout_sec(env)
+    if runtime_sec <= 0:
+        return base_timeout
+    return max(base_timeout, runtime_sec + REMOTE_RUNTIME_PAD_SEC)
+
+
 def validate_remote_workspace_root(env: Dict[str, str]) -> Tuple[str, str]:
     remote_root_raw = env.get("NETMIC_HARNESS_LINUX_ROOT", "").strip()
     if not remote_root_raw:
@@ -523,12 +531,13 @@ def summarize_commands_for_artifact(results: List[CommandResult]) -> List[Dict[s
     ]
 
 
-def run_remote(env: Dict[str, str], script: str) -> CommandResult:
+def run_remote(env: Dict[str, str], script: str, timeout_sec: int | None = None) -> CommandResult:
     linux_root = env["NETMIC_HARNESS_LINUX_ROOT"]
     ssh_base = build_ssh_base(env)
     remote_script = f"cd {shlex.quote(linux_root)} && {script}"
     command = ssh_base + [f"bash -lc {shlex.quote(remote_script)}"]
-    return run_command(command, timeout_sec=remote_timeout_sec(env))
+    effective_timeout = remote_timeout_sec(env) if timeout_sec is None else max(5, timeout_sec)
+    return run_command(command, timeout_sec=effective_timeout)
 
 
 def build_snapshot(
@@ -951,6 +960,7 @@ def main() -> int:
     smoke = run_remote(
         env,
         f"scripts/linux/virtual_mic_smoke.sh --duration {duration_sec}",
+        timeout_sec=remote_timeout_for_runtime(env, duration_sec),
     )
     append_section(runtime_log, "virtual-mic-smoke", smoke.stdout, smoke.stderr)
     run_status, run_summary = summarize_runtime(smoke)

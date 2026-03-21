@@ -59,7 +59,7 @@
 - `NETMIC_HARNESS_REMOTE_TIMEOUT_SEC`
   - 默认值：`120`
   - 用途：Coordinator / runner 调用 `ssh`、`rsync` 等远端命令时的单次命令超时（秒）。
-  - 说明：最小按 `5` 秒处理；超时会直接判为 `blocked`，并把底层超时报错写入产物。
+  - 说明：最小按 `5` 秒处理；超时会直接判为 `blocked`，并把底层超时报错写入产物。对已知长时步骤（例如 M0 的 `virtual_mic_smoke.sh --duration N`），runner 会自动把超时抬到 `max(该值, N+30)`，避免 smoke 时长长于默认超时。
 
 ## Client（netmic-client）
 
