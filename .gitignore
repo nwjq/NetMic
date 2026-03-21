@@ -18,6 +18,7 @@
 .harness/hosts.env
 .harness/runs/
 .harness/coordinator_state.json
+.harness/launchd/home/
 
 # Agent Hub 本地数据库
 agent_hub.db

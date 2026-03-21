@@ -109,6 +109,44 @@ Harness 运行前，默认已由上游文档确定：
   - 以前端 render ack 校验断线前/恢复后的真实 UI 刷新连续性与稳定窗口；ack 中的 `snapshot.status` 与可见状态标签必须一致
   - 回收真实 App 的 snapshot/event log/render log、phase1/phase2 音频 dump 与 UI 恢复产物
 
+## 4.1 本机周期执行建议
+
+若需要“每隔一段时间自动重跑双机 Harness”，优先使用当前 Mac 本机的调度器（如 `launchd`），不要依赖受限沙箱中的自动化线程去直接访问局域网 Linux。
+
+原因：
+
+- 双机 Harness 依赖真实 `ssh/rsync` 访问 `NETMIC_HARNESS_LINUX_HOST`
+- 目标通常是 `192.168.x.x` / `10.x.x.x` 这类私网地址
+- 这类链路必须从用户本机直接发起，才能复用现有 SSH 配置、密码或私钥
+
+仓库已提供本机调度辅助文件：
+
+- `scripts/harness/run_coordinator_local.sh`
+  - 本机直接执行 `coordinator.py`
+  - 自带本地锁，避免 M3 长跑与下一次调度重入
+- `scripts/harness/install_launchd_agent.sh`
+  - 生成并加载 `~/Library/LaunchAgents/com.netmic.harness.coordinator.plist`
+- `.harness/launchd/com.netmic.harness.coordinator.plist.example`
+  - `launchd` 模板
+
+推荐安装方式：
+
+```bash
+scripts/harness/install_launchd_agent.sh --hosts-env .harness/hosts.env --until M3 --interval-sec 1200
+```
+
+安装后：
+
+- `launchd` 会在当前 macOS 用户会话里直接跑 Harness
+- stdout/stderr 默认写入 `.harness/launchd/coordinator.stdout.log` 与 `.harness/launchd/coordinator.stderr.log`
+- 真正的 Harness 结论仍以 `.harness/runs/<run_id>/report.json` 为准
+
+若只想手工验证“本机调度链路是否通”，可先直接运行：
+
+```bash
+scripts/harness/run_coordinator_local.sh --hosts-env .harness/hosts.env --until M3
+```
+
 ## 5. 用户补充信息入口
 
 所有需要用户补充、且不应写死在仓库中的信息，统一放在：
