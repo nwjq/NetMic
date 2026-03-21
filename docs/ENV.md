@@ -33,6 +33,7 @@
   - 默认值：未设置
   - 用途：Linux 连接密码；可选。
   - 说明：若使用该字段而不是 `NETMIC_HARNESS_LINUX_SSH_KEY`，Coordinator 本机需提供 `sshpass`。
+  - 安全要求：明文密码只允许存在于 `.harness/hosts.env`；Harness 产物与报告不得回显该值。
 - `NETMIC_HARNESS_LINUX_SSH_KEY`
   - 默认值：未设置
   - 用途：Linux SSH 私钥路径；可选。

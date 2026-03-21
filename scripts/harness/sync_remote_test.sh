@@ -52,6 +52,18 @@ esac
 EOF
 chmod +x "$stub_dir/rsync"
 
+cat >"$stub_dir/sshpass" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-p" ]]; then
+  shift 2
+fi
+
+exec "$@"
+EOF
+chmod +x "$stub_dir/sshpass"
+
 run_case() {
   local mode="$1"
   local expect_status="$2"
@@ -63,7 +75,7 @@ run_case() {
   RSYNC_TEST_MODE="$mode" \
   RSYNC_TEST_LOG="$log_path" \
   PYTHONPATH="$ROOT/scripts/harness" \
-  python3 - "$workspace" "$expect_status" "$expect_summary" "$expect_calls" "$log_path" <<'PY'
+  python3 - "$workspace" "$expect_status" "$expect_summary" "$expect_calls" "$log_path" "$mode" <<'PY'
 import pathlib
 import sys
 
@@ -74,6 +86,7 @@ expect_status = sys.argv[2]
 expect_summary = sys.argv[3]
 expect_calls = int(sys.argv[4])
 log_path = pathlib.Path(sys.argv[5])
+mode = sys.argv[6]
 
 env = {
     "NETMIC_HARNESS_COORDINATOR_ROOT": str(workspace),
@@ -81,6 +94,7 @@ env = {
     "NETMIC_HARNESS_LINUX_PORT": "22",
     "NETMIC_HARNESS_LINUX_USER": "arc",
     "NETMIC_HARNESS_LINUX_ROOT": "/home/arc/code/NetMic",
+    "NETMIC_HARNESS_LINUX_PASSWORD": "top-secret",
 }
 
 status, summary, results = run_m0.sync_remote_workspace(env)
@@ -91,6 +105,15 @@ assert len(results) == expect_calls, len(results)
 commands = log_path.read_text(encoding="utf-8").splitlines()
 assert len(commands) == expect_calls, commands
 assert all("--exclude .harness/runs/" in command for command in commands), commands
+
+server_dir = workspace / "artifacts" / mode
+step = run_m0.run_remote_sync_step(env, server_dir)
+assert step.status == expect_status, step
+state = run_m0.json.loads((server_dir / "remote-sync.json").read_text(encoding="utf-8"))
+for item in state["commands"]:
+    command = item["command"]
+    assert "top-secret" not in command, command
+    assert "<redacted>" in command, command
 PY
 }
 

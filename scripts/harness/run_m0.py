@@ -284,13 +284,7 @@ def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
         {
             "status": status,
             "summary": summary,
-            "commands": [
-                {
-                    "command": result.command,
-                    "returncode": result.returncode,
-                }
-                for result in results
-            ],
+            "commands": summarize_commands_for_artifact(results),
             "updated_at": now_iso(),
         },
     )
@@ -317,6 +311,30 @@ def run_command(command: List[str]) -> CommandResult:
         stdout=proc.stdout,
         stderr=proc.stderr,
     )
+
+
+def redact_command_for_artifact(command: List[str]) -> List[str]:
+    redacted: List[str] = []
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if token == "sshpass" and index + 2 < len(command) and command[index + 1] == "-p":
+            redacted.extend(["sshpass", "-p", "<redacted>"])
+            index += 3
+            continue
+        redacted.append(token)
+        index += 1
+    return redacted
+
+
+def summarize_commands_for_artifact(results: List[CommandResult]) -> List[Dict[str, object]]:
+    return [
+        {
+            "command": redact_command_for_artifact(result.command),
+            "returncode": result.returncode,
+        }
+        for result in results
+    ]
 
 
 def run_remote(env: Dict[str, str], script: str) -> CommandResult:

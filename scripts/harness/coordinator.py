@@ -292,13 +292,7 @@ def write_sync_artifacts(
         {
             "status": status,
             "summary": summary,
-            "commands": [
-                {
-                    "command": result.command,
-                    "returncode": result.returncode,
-                }
-                for result in results
-            ],
+            "commands": run_m0.summarize_commands_for_artifact(results),
             "updated_at": now_iso(),
         },
     )
