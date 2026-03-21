@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import run_m0
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HOSTS_ENV = ROOT / ".harness" / "hosts.env"
@@ -291,8 +293,44 @@ def main() -> int:
     steps: List[Dict[str, object]] = []
     final_status = "pass"
     final_summary = f"所有目标里程碑已完成（截至 {args.until}）"
+    sync_keys = (
+        "NETMIC_HARNESS_LINUX_HOST",
+        "NETMIC_HARNESS_LINUX_USER",
+        "NETMIC_HARNESS_LINUX_ROOT",
+    )
+    if all(env.get(key, "").strip() for key in sync_keys):
+        prepare_status, prepare_summary = run_m0.require_local_tools(
+            password_auth=bool(
+                env.get("NETMIC_HARNESS_LINUX_PASSWORD", "")
+                and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
+            ),
+            needs_node=False,
+            needs_rsync=True,
+        )
+        steps.append(
+            {
+                "id": "sync-remote-prepare",
+                "status": prepare_status,
+                "summary": prepare_summary,
+            }
+        )
+        if prepare_status != "pass":
+            final_status = prepare_status
+            final_summary = prepare_summary
+        else:
+            sync_status, sync_summary, _sync_logs = run_m0.sync_remote_workspace(env)
+            steps.append(
+                {
+                    "id": "sync-remote",
+                    "status": sync_status,
+                    "summary": sync_summary,
+                }
+            )
+            if sync_status != "pass":
+                final_status = sync_status
+                final_summary = sync_summary
 
-    while True:
+    while final_status == "pass":
         reports = load_run_reports(artifact_root)
         unfinished = find_first_unfinished(reports, args.until)
         if unfinished is None:

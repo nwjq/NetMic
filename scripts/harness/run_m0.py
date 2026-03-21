@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import sync_remote
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HOSTS_ENV = ROOT / ".harness" / "hosts.env"
@@ -29,9 +31,18 @@ DEFAULT_DURATION_SEC = 300
 DEFAULT_SERVER_PORT = 43000
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 UI_POLL_INTERVAL_MS = 1000
+DEFAULT_SYNC_EXCLUDES = (
+    ".git/",
+    ".harness/hosts.env",
+    ".harness/runs/",
+    ".codex/",
+    "target/",
+    "node_modules/",
+)
 
 BLOCKED_PATTERNS = (
     "permission denied",
+    "operation not permitted",
     "host key verification failed",
     "connection refused",
     "connection timed out",
@@ -120,12 +131,14 @@ def classify_output(output: str) -> str:
     return "fail"
 
 
-def require_local_tools(password_auth: bool, needs_node: bool) -> Tuple[str, str]:
+def require_local_tools(password_auth: bool, needs_node: bool, needs_rsync: bool = False) -> Tuple[str, str]:
     missing: List[str] = []
     if shutil.which("ssh") is None:
         missing.append("ssh")
     if password_auth and shutil.which("sshpass") is None:
         missing.append("sshpass")
+    if needs_rsync and shutil.which("rsync") is None:
+        missing.append("rsync")
     if needs_node and shutil.which("node") is None:
         missing.append("node")
     if missing:
@@ -136,18 +149,13 @@ def require_local_tools(password_auth: bool, needs_node: bool) -> Tuple[str, str
     return ("pass", "本地依赖检查通过")
 
 
-def build_ssh_base(env: Dict[str, str]) -> List[str]:
-    user = env["NETMIC_HARNESS_LINUX_USER"]
-    host = env["NETMIC_HARNESS_LINUX_HOST"]
+def build_ssh_transport(env: Dict[str, str]) -> List[str]:
     port = env.get("NETMIC_HARNESS_LINUX_PORT", "22") or "22"
     ssh_key = env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
     password = env.get("NETMIC_HARNESS_LINUX_PASSWORD", "")
     ssh_opts = env.get("NETMIC_HARNESS_SSH_OPTS", "")
 
-    command: List[str] = []
-    if password and not ssh_key:
-        command.extend(["sshpass", "-p", password])
-    command.extend(["ssh", "-p", port])
+    command: List[str] = ["ssh", "-p", port]
     if password and not ssh_key:
         command.extend(
             [
@@ -163,8 +171,87 @@ def build_ssh_base(env: Dict[str, str]) -> List[str]:
         command.extend(["-i", ssh_key])
     if ssh_opts:
         command.extend(shlex.split(ssh_opts))
+    return command
+
+
+def build_ssh_base(env: Dict[str, str]) -> List[str]:
+    user = env["NETMIC_HARNESS_LINUX_USER"]
+    host = env["NETMIC_HARNESS_LINUX_HOST"]
+    ssh_key = env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
+    password = env.get("NETMIC_HARNESS_LINUX_PASSWORD", "")
+
+    command: List[str] = []
+    if password and not ssh_key:
+        command.extend(["sshpass", "-p", password])
+    command.extend(build_ssh_transport(env))
     command.append(f"{user}@{host}")
     return command
+
+
+def coordinator_root_from_env(env: Dict[str, str]) -> Path:
+    raw = (
+        env.get("NETMIC_HARNESS_COORDINATOR_ROOT", "")
+        or env.get("NETMIC_HARNESS_MAC_ROOT", "")
+        or str(ROOT)
+    )
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
+
+
+def build_rsync_command(env: Dict[str, str], local_root: Path, dry_run: bool) -> List[str]:
+    user = env["NETMIC_HARNESS_LINUX_USER"]
+    host = env["NETMIC_HARNESS_LINUX_HOST"]
+    remote_root = env["NETMIC_HARNESS_LINUX_ROOT"].rstrip("/")
+    ssh_key = env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
+    password = env.get("NETMIC_HARNESS_LINUX_PASSWORD", "")
+
+    command: List[str] = []
+    if password and not ssh_key:
+        command.extend(["sshpass", "-p", password])
+    command.extend(["rsync", "-az", "--delete", "--itemize-changes"])
+    if dry_run:
+        command.append("--dry-run")
+    for pattern in DEFAULT_SYNC_EXCLUDES:
+        command.extend(["--exclude", pattern])
+    ssh_transport = " ".join(shlex.quote(part) for part in build_ssh_transport(env))
+    command.extend(
+        [
+            "-e",
+            ssh_transport,
+            f"{str(local_root).rstrip('/')}/",
+            f"{user}@{host}:{remote_root}/",
+        ]
+    )
+    return command
+
+
+def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandResult]]:
+    local_root = coordinator_root_from_env(env)
+    if not local_root.exists():
+        return ("blocked", f"本地 Coordinator 根目录不存在：{local_root}", [])
+
+    dry_run_result = run_command(build_rsync_command(env, local_root, dry_run=True))
+    combined = "\n".join(part for part in (dry_run_result.stdout, dry_run_result.stderr) if part).strip()
+    if dry_run_result.returncode != 0:
+        return (classify_output(combined), "远端工作区同步预检失败", [dry_run_result])
+    if not combined:
+        return ("pass", "远端工作区已与本地同步", [dry_run_result])
+
+    apply_result = run_command(build_rsync_command(env, local_root, dry_run=False))
+    combined = "\n".join(part for part in (apply_result.stdout, apply_result.stderr) if part).strip()
+    if apply_result.returncode != 0:
+        return (
+            classify_output(combined),
+            "远端工作区同步失败",
+            [dry_run_result, apply_result],
+        )
+    return (
+        "pass",
+        "已将本地工作区同步到远端",
+        [dry_run_result, apply_result],
+    )
 
 
 def run_command(command: List[str]) -> CommandResult:
@@ -457,6 +544,31 @@ def main() -> int:
         write_json(run_dir / "report.json", report)
         print(prepare_summary)
         return 2
+
+    sync_step = sync_remote.ensure_remote_head_synced(
+        env,
+        server_dir / "remote-sync.log",
+        server_dir / "remote-sync.json",
+    )
+    steps.append(sync_step)
+    logs.append(step_log("info" if sync_step.status == "pass" else "error", sync_step.summary))
+    if sync_step.status != "pass":
+        summary = sync_step.summary
+        status = sync_step.status
+        ui_step = run_ui_verify(build_snapshot(env, {}, status, summary, logs), ui_dir)
+        steps.append(ui_step)
+        logs.append(step_log("info" if ui_step.status == "pass" else "error", ui_step.summary))
+        report = {
+            "run_id": run_id,
+            "status": status,
+            "summary": summary,
+            "started_at": manifest["started_at"],
+            "finished_at": now_iso(),
+            "steps": [asdict(step) for step in steps],
+        }
+        write_json(run_dir / "report.json", report)
+        print(summary)
+        return 2 if status == "blocked" else 1
 
     bootstrap_log = server_dir / "bootstrap.log"
     runtime_log = server_dir / "runtime.log"

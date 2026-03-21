@@ -50,6 +50,7 @@ Harness 运行前，默认已由上游文档确定：
 1. `prepare`
    - 读取 `.harness/hosts.env`
    - 校验本地与远端工作目录、端口、设备名等信息
+   - 先比对本地工作区与 Linux 远端仓库；若未同步则先同步，再进入后续阶段
 2. `bootstrap-linux`
    - 自检 PipeWire/Pulse 环境
    - 创建或确认虚拟麦克风
@@ -73,6 +74,7 @@ Harness 运行前，默认已由上游文档确定：
 
 - 总控：`scripts/harness/coordinator.py`
   - 扫描 `.harness/runs/*/report.json`
+  - 每次启动先检查本地工作区是否已同步到 Linux 远端仓库，必要时先执行同步
   - 判断每个里程碑是否已有 `pass`
   - 从第一个未完成里程碑继续循环调度 runner，直到目标里程碑或真实 `fail/blocked`
   - runner 缺失时输出 `fail`，而不是把“未实现”误判成“已完成”
@@ -188,7 +190,8 @@ UI 对齐要求：
 
 1. `prepare`
    - 校验 `.harness/hosts.env`
-   - 校验本机依赖（`ssh`、必要时 `sshpass`、`node`）
+   - 校验本机依赖（`ssh`、必要时 `sshpass`、`rsync`、`node`）
+   - 先确认本地工作区已同步到 Linux 远端仓库；未同步则由 coordinator 先补同步
 2. `bootstrap-linux`
    - `scripts/linux/audio_selfcheck.sh --json`
    - `scripts/linux/virtual_mic.sh create`
@@ -203,7 +206,7 @@ UI 对齐要求：
 判定规则：
 
 - 自检、虚拟麦就绪、测试音实际写入、UI 产物齐备时，才可判定 `pass`
-- 缺少 SSH / `sshpass` / `node`、缺少 PipeWire/Pulse 依赖、Linux 不可达等，判定 `blocked`
+- 缺少 SSH / `sshpass` / `rsync` / `node`、缺少 PipeWire/Pulse 依赖、Linux 不可达、或本机/沙箱禁止 SSH 连接等，判定 `blocked`
 - 其余执行错误判定为 `fail`
 
 ### 顶层 coordinator 口径
