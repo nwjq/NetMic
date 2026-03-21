@@ -18,16 +18,32 @@ tmpdir = pathlib.Path(sys.argv[1])
 event_log = tmpdir / "event-log.ndjson"
 
 ok_events = [
-    {"ts_ms": 1000, "snapshot": {"status": "streaming"}},
-    {"ts_ms": 2000, "snapshot": {"status": "streaming"}},
-    {"ts_ms": 3900, "snapshot": {"status": "streaming"}},
+    {
+        "ts_ms": 1000,
+        "snapshot": {"status": "streaming"},
+        "visible": {"status_label": "推流中"},
+    },
+    {
+        "ts_ms": 2000,
+        "snapshot": {"status": "streaming"},
+        "visible": {"status_label": "推流中"},
+    },
+    {
+        "ts_ms": 3900,
+        "snapshot": {"status": "streaming"},
+        "visible": {"status_label": "推流中"},
+    },
 ]
 report = run_m3.analyze_refresh_window(ok_events, 0, len(ok_events) - 1, "streaming")
 assert report["ok"] is True, report
 assert report["max_gap_ms"] == 1900, report
 
 unexpected_events = ok_events + [
-    {"ts_ms": 4800, "snapshot": {"status": "connecting"}},
+    {
+        "ts_ms": 4800,
+        "snapshot": {"status": "connecting"},
+        "visible": {"status_label": "连接中"},
+    },
 ]
 report = run_m3.analyze_refresh_window(
     unexpected_events,
@@ -39,8 +55,16 @@ assert report["ok"] is False, report
 assert report["unexpected_statuses"] == ["connecting"], report
 
 gap_events = [
-    {"ts_ms": 1000, "snapshot": {"status": "streaming"}},
-    {"ts_ms": 5005, "snapshot": {"status": "streaming"}},
+    {
+        "ts_ms": 1000,
+        "snapshot": {"status": "streaming"},
+        "visible": {"status_label": "推流中"},
+    },
+    {
+        "ts_ms": 5005,
+        "snapshot": {"status": "streaming"},
+        "visible": {"status_label": "推流中"},
+    },
 ]
 report = run_m3.analyze_refresh_window(gap_events, 0, len(gap_events) - 1, "streaming")
 assert report["ok"] is False, report
@@ -49,10 +73,31 @@ assert report["max_gap_ms"] == 4005, report
 event_log.write_text(
     "\n".join(
         [
-            json.dumps({"ts_ms": 1000, "snapshot": {"status": "streaming"}}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+                ensure_ascii=False,
+            ),
             "{bad json",
-            json.dumps({"ts_ms": 2500, "snapshot": {"status": "connecting"}}, ensure_ascii=False),
-            json.dumps({"ts_ms": 4100, "snapshot": {"status": "streaming"}}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "ts_ms": 2500,
+                    "snapshot": {"status": "connecting"},
+                    "visible": {"status_label": "连接中"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "ts_ms": 4100,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+                ensure_ascii=False,
+            ),
             "",
         ]
     ),
