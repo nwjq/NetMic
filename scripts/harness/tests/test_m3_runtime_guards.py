@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -624,6 +625,49 @@ class RunM3RefreshWindowTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertTrue(report["note_contains_hint"])
 
+    def test_stale_visibility_requires_expired_hint_for_server_mode(self):
+        report = run_m3.analyze_stale_visibility(
+            {
+                "ts_ms": 6000,
+                "snapshot": {
+                    "mode": "server",
+                    "status": "listening",
+                    "runtime": {"server_status_updated_ms": 3000},
+                },
+                "visible": {
+                    "status_label": "监听中",
+                    "status_note": "等待客户端连接",
+                    "connection_lines": ["模式：Server", "状态：监听中"],
+                },
+            }
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["stale_required"])
+
+    def test_stale_visibility_accepts_visible_expired_hint(self):
+        report = run_m3.analyze_stale_visibility(
+            {
+                "ts_ms": 6000,
+                "snapshot": {
+                    "mode": "server",
+                    "status": "listening",
+                    "runtime": {"server_status_updated_ms": 3000},
+                },
+                "visible": {
+                    "status_label": "监听中",
+                    "status_note": "等待客户端连接",
+                    "connection_lines": [
+                        "模式：Server",
+                        "服务端状态已过期（距最近刷新 3s），请检查状态刷新链路",
+                    ],
+                },
+            }
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["stale_hint_visible"])
+
 
 class RunM3VisibleArtifactTests(unittest.TestCase):
     def setUp(self):
@@ -701,6 +745,21 @@ class RunM3VisibleArtifactTests(unittest.TestCase):
 
         self.assertEqual(step.status, "fail")
         self.assertIn("params_lines", step.summary)
+
+    def test_render_phase_snapshot_rejects_missing_stale_hint_for_server_mode(self):
+        event = self.make_event()
+        event["ts_ms"] = 7000
+        event["snapshot"]["mode"] = "server"
+        event["snapshot"]["status"] = "listening"
+        event["snapshot"]["runtime"]["server_status_updated_ms"] = 4000
+        event["visible"]["status_label"] = "监听中"
+        event["visible"]["status_note"] = "等待客户端连接"
+        event["visible"]["connection_lines"] = ["模式：Server", "状态：监听中"]
+
+        step = run_m3.render_phase_snapshot(event, self.ui_dir, "steady")
+
+        self.assertEqual(step.status, "fail")
+        self.assertIn("状态过期提示", step.summary)
 
     def test_promote_phase_ui_artifacts_copies_standard_top_level_files(self):
         run_m3.render_phase_snapshot(self.make_event(), self.ui_dir, "steady")

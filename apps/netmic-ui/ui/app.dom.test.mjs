@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  SERVER_STATUS_STALE_ALERT_MS,
   renderConfig,
   renderLogs,
   renderModeButtons,
@@ -176,6 +177,54 @@ test("renderStatus writes key status fields and events", () => {
   assert.ok(elements.statusParams.innerHTML.includes("采样率：48000 Hz"));
   assert.ok(elements.statusEvents.innerHTML.includes("hello-status"));
   assert.equal(waveformCalled, true);
+});
+
+test("renderStatus shows stale alert when server status is outdated", () => {
+  const elements = createStatusElements();
+  const now = Date.now();
+  const state = {
+    mode: "server",
+    status: "listening",
+    status_note: "等待客户端连接",
+    server_config: { listen_port: 43000 },
+    runtime: {
+      connected_seconds: 0,
+      peer_addr: null,
+      last_error: null,
+      virtual_mic_name: "NetMic Virtual Mic",
+      virtual_mic_ready: true,
+      virtual_mic_error: null,
+      server_status_updated_ms: now - SERVER_STATUS_STALE_ALERT_MS - 1200,
+    },
+    metrics: {
+      rtt_ms: 0,
+      packet_loss_pct: 0,
+      buffer_depth_ms: 0,
+      estimated_e2e_latency_ms: 0,
+      audio_rms: 0,
+      audio_peak: 0,
+      uplink_kbps: 0,
+      jitter_buffer_depth_ms: 0,
+    },
+    effective: {
+      codec: "opus",
+      sample_rate_hz: 48000,
+      channels: 1,
+      chunk_ms: 20,
+      opus_bitrate_kbps: 48,
+      jitter_buffer_ms: 100,
+    },
+    logs: [{ level: "warn", message: "status stale" }],
+  };
+
+  renderStatus({
+    state,
+    elements,
+    ensureWaveformCanvas: () => {},
+  });
+
+  assert.ok(elements.statusConnection.innerHTML.includes("服务端状态已过期"));
+  assert.ok(elements.statusConnection.innerHTML.includes("状态更新距今"));
 });
 
 test("renderConfig switches between client/server forms", () => {

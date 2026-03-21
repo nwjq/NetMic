@@ -31,6 +31,8 @@ export const formatTimestamp = (ms) => {
   });
 };
 
+export const SERVER_STATUS_STALE_ALERT_MS = 2_000;
+
 export const renderStatusPill = ({ state, elements }) => {
   const config = statusMap[state.status] || statusMap.idle;
   elements.statusLabel.textContent = config.label;
@@ -270,8 +272,13 @@ export const renderStatus = ({ state, elements, ensureWaveformCanvas }) => {
     state.status === "error" &&
     (state.status_note || "").includes("服务端未响应");
   const statusUpdatedMs = state.runtime?.server_status_updated_ms || 0;
+  const statusAgeMs = statusUpdatedMs > 0 ? Math.max(0, Date.now() - statusUpdatedMs) : null;
   const statusAgeSec =
-    statusUpdatedMs > 0 ? Math.max(0, Math.floor((Date.now() - statusUpdatedMs) / 1000)) : null;
+    statusAgeMs !== null ? Math.floor(statusAgeMs / 1000) : null;
+  const serverStatusStale =
+    state.mode === "server" &&
+    statusAgeMs !== null &&
+    statusAgeMs > SERVER_STATUS_STALE_ALERT_MS;
   const statusUpdatedLine =
     state.mode === "server" && statusUpdatedMs > 0
       ? `<div class="list-item">状态更新时间：${formatTimestamp(statusUpdatedMs)}</div>`
@@ -300,6 +307,11 @@ export const renderStatus = ({ state, elements, ensureWaveformCanvas }) => {
     ${
       serverUnresponsive
         ? `<div class="status-alert danger">服务端未响应，请确认服务端已启动且监听 ${listenPort}</div>`
+        : ""
+    }
+    ${
+      serverStatusStale
+        ? `<div class="status-alert warn">服务端状态已过期（距最近刷新 ${statusAgeSec}s），请检查状态刷新链路</div>`
         : ""
     }
     <div class="list">

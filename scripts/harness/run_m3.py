@@ -250,6 +250,36 @@ def analyze_reconnect_visibility(event: Dict[str, object]) -> Dict[str, object]:
     }
 
 
+def analyze_stale_visibility(event: Dict[str, object]) -> Dict[str, object]:
+    snapshot = dict(event.get("snapshot") or {})
+    visible = dict(event.get("visible") or {})
+    rendered_at_ms = event_ts_ms(event)
+    status_updated_ms = event_status_updated_ms(event)
+    status_age_ms = (
+        max(0, rendered_at_ms - status_updated_ms)
+        if rendered_at_ms > 0 and status_updated_ms > 0
+        else None
+    )
+    stale_required = (
+        str(snapshot.get("mode") or "") == "server"
+        and status_age_ms is not None
+        and status_age_ms > STATUS_UPDATE_STALE_MS
+    )
+    connection_lines = visible_lines(visible, "connection_lines")
+    status_note = str(visible.get("status_note") or "")
+    stale_hint_visible = any("状态已过期" in line for line in connection_lines) or "状态已过期" in status_note
+    return {
+        "ok": not stale_required or stale_hint_visible,
+        "stale_required": stale_required,
+        "rendered_at_ms": rendered_at_ms,
+        "server_status_updated_ms": status_updated_ms,
+        "server_status_age_ms": status_age_ms,
+        "visible_status_note": status_note,
+        "connection_lines": connection_lines,
+        "stale_hint_visible": stale_hint_visible,
+    }
+
+
 def stop_ui_process(proc: subprocess.Popen[str]) -> bool:
     if proc.poll() is not None:
         return False
@@ -493,6 +523,7 @@ def render_phase_snapshot(event: Dict[str, object], ui_dir: Path, phase: str) ->
         },
     )
     refresh_check = build_refresh_check(event)
+    stale_visibility = analyze_stale_visibility(event)
     run_m0.write_json(phase_dir / "refresh-check.json", refresh_check)
 
     params_lines = visible_lines(visible, "params_lines")
@@ -523,6 +554,8 @@ def render_phase_snapshot(event: Dict[str, object], ui_dir: Path, phase: str) ->
         issues.append("缺少配置可见内容")
     if not visible_lines(visible, "log_lines"):
         issues.append("缺少日志可见内容")
+    if not stale_visibility["ok"]:
+        issues.append("缺少状态过期提示")
     if issues:
         return run_m0.StepResult(
             f"ui-verify-{phase}",

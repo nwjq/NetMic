@@ -18,6 +18,7 @@ let waveformPoints = [];
 let waveformCanvas = null;
 let waveformCtx = null;
 let pendingHarnessRenderReport = false;
+let statusPoller = null;
 
 const sampleRates = [16000, 24000, 32000, 44100, 48000];
 const chunkOptions = [10, 20, 40, 60];
@@ -288,6 +289,14 @@ const scheduleAfterRender = (callback) => {
   window.setTimeout(callback, 0);
 };
 
+const scheduleInterval = (callback, delayMs) => {
+  const timer = window.setInterval(callback, delayMs);
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+  return timer;
+};
+
 const htmlToLines = (html) =>
   String(html || "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -373,8 +382,8 @@ const registerAdapterListeners = () => {
 };
 
 const startStatusPoller = () => {
-  if (!hasTauri || !adapter.getStatus) return;
-  window.setInterval(async () => {
+  if (!hasTauri || !adapter.getStatus || statusPoller) return;
+  statusPoller = scheduleInterval(async () => {
     if (getState().mode !== "client") return;
     try {
       const snapshot = await adapter.getStatus();

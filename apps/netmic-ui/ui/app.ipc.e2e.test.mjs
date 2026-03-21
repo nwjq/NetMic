@@ -114,8 +114,15 @@ const createTauriStub = () => {
   return { invoke, event, emit, calls };
 };
 
-test("ipc adapter calls invoke and updates UI from snapshot", async () => {
-  await buildDom();
+test("ipc adapter calls invoke and updates UI from snapshot", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
   const tauri = createTauriStub();
   global.window.__TAURI__ = { invoke: tauri.invoke, event: tauri.event };
 

@@ -72,6 +72,13 @@ export const isBusy = (snapshot) =>
 
 export const deepClone = (value) => JSON.parse(JSON.stringify(value));
 
+const unrefTimer = (timer) => {
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+  return timer;
+};
+
 export const createMockAdapter = () => {
   let mockState = deepClone(defaultSnapshot());
   let listeners = [];
@@ -128,17 +135,17 @@ export const createMockAdapter = () => {
 
   const startTicker = () => {
     if (ticker) return;
-    ticker = setInterval(() => {
+    ticker = unrefTimer(setInterval(() => {
       updateMetrics();
       emit();
-    }, 1000);
+    }, 1000));
   };
 
   const startWaveTicker = () => {
     if (waveTicker) return;
-    waveTicker = setInterval(() => {
+    waveTicker = unrefTimer(setInterval(() => {
       updateWaveform();
-    }, WAVEFORM_INTERVAL_MS);
+    }, WAVEFORM_INTERVAL_MS));
   };
 
   const stopTicker = () => {
