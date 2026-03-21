@@ -76,6 +76,7 @@ Harness 运行前，默认已由上游文档确定：
 - 总控：`scripts/harness/coordinator.py`
   - 扫描 `.harness/runs/*/report.json`
   - 每次启动先检查本地工作区是否已同步到 Linux 远端仓库，必要时先执行同步
+  - 只承认“源码快照与当前本地仓库一致”的历史 `pass`；旧产物若对应旧 commit、旧 dirty worktree 或缺少 repo 快照，必须重新验收
   - 判断每个里程碑是否已有 `pass`
   - 若某个里程碑仍是 `pending`，在 `.harness/coordinator_state.json` 中记录最近一次尝试及原因
   - 从第一个未完成里程碑继续循环调度 runner，直到目标里程碑或真实 `fail/blocked`
@@ -144,6 +145,9 @@ Harness 运行前，默认已由上游文档确定：
 .harness/runs/<run_id>/
   manifest.json
   report.json
+  sync/
+    remote-sync.json
+    remote-sync.log
   client/
     bootstrap.log
     runtime.log
@@ -167,6 +171,7 @@ Harness 运行前，默认已由上游文档确定：
 
 - 先保证“有统一产物”，再追求格式复杂度。
 - 所有 verdict 必须能追溯到对应 run 的产物。
+- `manifest.json` / `sync/remote-sync.json` 应记录本地源码快照（至少包含 `head_commit`、dirty 状态与变更指纹），以便 coordinator 判断旧 `pass` 是否已过期。
 - 若当前里程碑暂未要求音频 dump，可先不生成 `audio_dump.pcm`，但必须补齐对应阶段的关键日志与状态文件。
 
 ## 7. 里程碑与 Harness 对齐
@@ -229,6 +234,7 @@ UI 对齐要求：
 
 1. 扫描 `.harness/runs/*/report.json`
 2. 结合 `manifest.json` / `recovery.json` 判断 `M0 -> M1 -> M2 -> M3` 中第一个未完成里程碑
+   - 只有当历史 `pass` 的 repo 快照与当前本地仓库一致时，才可继续承认该 `pass`
 3. 调用对应 runner
 4. 若 runner 返回 `pass`，继续推进下一里程碑
 5. 若 runner 返回 `blocked`，只在真实现场阻塞时暂停

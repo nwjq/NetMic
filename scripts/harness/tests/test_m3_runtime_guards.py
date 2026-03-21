@@ -13,6 +13,19 @@ import run_m3  # noqa: E402
 
 
 class CoordinatorM3PassCriteriaTests(unittest.TestCase):
+    def setUp(self):
+        self.original_repo_state = coordinator.CURRENT_REPO_STATE
+        coordinator.CURRENT_REPO_STATE = {
+            "head_commit": "current-head",
+            "branch": "develop",
+            "dirty": False,
+            "fingerprint": None,
+            "changed_paths": [],
+        }
+
+    def tearDown(self):
+        coordinator.CURRENT_REPO_STATE = self.original_repo_state
+
     def make_report(self, *, started_at: str, finished_at: str, wall_runtime_sec=None):
         report = {
             "status": "pass",
@@ -22,6 +35,12 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
                 "milestone": "M3",
                 "runtime": {
                     "app_runtime_sec": 1800,
+                },
+                "repo": {
+                    "head_commit": "current-head",
+                    "branch": "develop",
+                    "dirty": False,
+                    "fingerprint": None,
                 },
             },
             "_recovery": {
@@ -74,6 +93,75 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
 
         self.assertIn("最近一次 run 为 blocked", note)
         self.assertIn("Operation not permitted", note)
+
+
+class CoordinatorRepoFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        self.original_repo_state = coordinator.CURRENT_REPO_STATE
+        coordinator.CURRENT_REPO_STATE = {
+            "head_commit": "current-head",
+            "branch": "develop",
+            "dirty": True,
+            "fingerprint": "sha256:new",
+            "changed_paths": ["scripts/harness/coordinator.py", "docs/HARNESS.md"],
+        }
+
+    def tearDown(self):
+        coordinator.CURRENT_REPO_STATE = self.original_repo_state
+
+    def test_missing_repo_snapshot_is_treated_as_stale(self):
+        report = {
+            "status": "pass",
+            "_manifest": {"milestone": "M1"},
+            "_recovery": {},
+        }
+
+        note = coordinator.report_completion_note(report, "M1")
+
+        self.assertIn("缺少仓库快照", note)
+        self.assertIsNone(coordinator.latest_pass_for_milestone([report], "M1"))
+
+    def test_commit_mismatch_is_treated_as_stale(self):
+        report = {
+            "status": "pass",
+            "_manifest": {
+                "milestone": "M2",
+                "repo": {
+                    "head_commit": "old-head",
+                    "branch": "develop",
+                    "dirty": False,
+                    "fingerprint": None,
+                },
+            },
+            "_recovery": {},
+        }
+
+        note = coordinator.report_completion_note(report, "M2")
+
+        self.assertIn("old-head", note)
+        self.assertIn("current-head", note)
+        self.assertIsNone(coordinator.latest_pass_for_milestone([report], "M2"))
+
+    def test_dirty_fingerprint_mismatch_lists_current_changed_paths(self):
+        report = {
+            "status": "pass",
+            "_manifest": {
+                "milestone": "M0",
+                "repo": {
+                    "head_commit": "current-head",
+                    "branch": "develop",
+                    "dirty": True,
+                    "fingerprint": "sha256:old",
+                    "changed_paths": ["scripts/harness/run_m0.py"],
+                },
+            },
+            "_recovery": {},
+        }
+
+        note = coordinator.report_completion_note(report, "M0")
+
+        self.assertIn("当前工作区改动集已变化", note)
+        self.assertIn("scripts/harness/coordinator.py", note)
 
 
 class RunM3VerdictTests(unittest.TestCase):

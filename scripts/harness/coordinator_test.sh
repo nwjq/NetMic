@@ -10,13 +10,29 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 artifact_root="$tmpdir/runs"
 mkdir -p "$artifact_root/m0-pass" "$artifact_root/m1-pass"
+current_repo_json="$(PYTHONPATH="$ROOT/scripts/harness" python3 - <<'PY'
+import json
+import run_m0
+
+print(json.dumps(run_m0.collect_repo_state(), ensure_ascii=False, indent=2))
+PY
+)"
 
 cat >"$artifact_root/m0-pass/manifest.json" <<'EOF'
 {
   "run_id": "m0-pass",
-  "milestone": "M0"
+  "milestone": "M0",
+  "repo": __CURRENT_REPO_JSON__
 }
 EOF
+python3 - "$artifact_root/m0-pass/manifest.json" "$current_repo_json" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repo_json = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__CURRENT_REPO_JSON__", repo_json), encoding="utf-8")
+PY
 
 cat >"$artifact_root/m0-pass/report.json" <<'EOF'
 {
@@ -30,9 +46,18 @@ EOF
 cat >"$artifact_root/m1-pass/manifest.json" <<'EOF'
 {
   "run_id": "m1-pass",
-  "milestone": "M1"
+  "milestone": "M1",
+  "repo": __CURRENT_REPO_JSON__
 }
 EOF
+python3 - "$artifact_root/m1-pass/manifest.json" "$current_repo_json" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repo_json = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__CURRENT_REPO_JSON__", repo_json), encoding="utf-8")
+PY
 
 cat >"$artifact_root/m1-pass/report.json" <<'EOF'
 {
@@ -74,9 +99,18 @@ mkdir -p "$artifact_root/m2-pass" "$artifact_root/m3-short-pass"
 cat >"$artifact_root/m2-pass/manifest.json" <<'EOF'
 {
   "run_id": "m2-pass",
-  "milestone": "M2"
+  "milestone": "M2",
+  "repo": __CURRENT_REPO_JSON__
 }
 EOF
+python3 - "$artifact_root/m2-pass/manifest.json" "$current_repo_json" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repo_json = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__CURRENT_REPO_JSON__", repo_json), encoding="utf-8")
+PY
 
 cat >"$artifact_root/m2-pass/report.json" <<'EOF'
 {
@@ -91,11 +125,20 @@ cat >"$artifact_root/m3-short-pass/manifest.json" <<'EOF'
 {
   "run_id": "m3-short-pass",
   "milestone": "M3",
+  "repo": __CURRENT_REPO_JSON__,
   "runtime": {
     "app_runtime_sec": 24
   }
 }
 EOF
+python3 - "$artifact_root/m3-short-pass/manifest.json" "$current_repo_json" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repo_json = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__CURRENT_REPO_JSON__", repo_json), encoding="utf-8")
+PY
 
 cat >"$artifact_root/m3-short-pass/recovery.json" <<'EOF'
 {

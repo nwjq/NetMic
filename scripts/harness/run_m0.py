@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -94,6 +95,96 @@ def parse_env_file(path: Path) -> Dict[str, str]:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def should_exclude_sync_path(path_str: str) -> bool:
+    normalized = path_str.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if not normalized:
+        return True
+    for pattern in DEFAULT_SYNC_EXCLUDES:
+        candidate = pattern.strip().replace("\\", "/").rstrip("/")
+        if not candidate:
+            continue
+        if normalized == candidate or normalized.startswith(candidate + "/"):
+            return True
+    return False
+
+
+def _hash_repo_path(relative_path: str) -> str:
+    path = ROOT / relative_path
+    if not path.exists():
+        return "deleted"
+    if path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    return "present"
+
+
+def collect_repo_state() -> Dict[str, object]:
+    head = run_command(["git", "rev-parse", "HEAD"])
+    if head.returncode != 0:
+        return {
+            "available": False,
+            "error": summarize_command_issue("\n".join((head.stdout, head.stderr)).strip())
+            or "git rev-parse HEAD failed",
+        }
+
+    branch = run_command(["git", "branch", "--show-current"])
+    status = run_command(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"]
+    )
+    if status.returncode != 0:
+        return {
+            "available": False,
+            "head_commit": head.stdout.strip(),
+            "branch": branch.stdout.strip(),
+            "error": summarize_command_issue("\n".join((status.stdout, status.stderr)).strip())
+            or "git status failed",
+        }
+
+    dirty_entries: List[Dict[str, str]] = []
+    for raw_line in status.stdout.splitlines():
+        if len(raw_line) < 4:
+            continue
+        status_code = raw_line[:2]
+        raw_path = raw_line[3:].strip()
+        if not raw_path:
+            continue
+        path_parts = [part.strip() for part in raw_path.split(" -> ")] if " -> " in raw_path else [raw_path]
+        relative_path = path_parts[-1]
+        if should_exclude_sync_path(relative_path):
+            continue
+        entry = {
+            "path": relative_path,
+            "status": status_code,
+            "content_sha256": _hash_repo_path(relative_path),
+        }
+        if len(path_parts) == 2 and path_parts[0] != path_parts[1]:
+            entry["from_path"] = path_parts[0]
+        dirty_entries.append(entry)
+
+    dirty_entries.sort(key=lambda item: item["path"])
+    fingerprint = ""
+    if dirty_entries:
+        fingerprint = "sha256:" + hashlib.sha256(
+            json.dumps(
+                dirty_entries,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    return {
+        "available": True,
+        "head_commit": head.stdout.strip(),
+        "branch": branch.stdout.strip(),
+        "dirty": bool(dirty_entries),
+        "fingerprint": fingerprint or None,
+        "changed_paths": [entry["path"] for entry in dirty_entries],
+        "entry_count": len(dirty_entries),
+    }
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -327,6 +418,7 @@ def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
     log_path = server_dir / "remote-sync.log"
     state_path = server_dir / "remote-sync.json"
     status, summary, results = sync_remote_workspace(env)
+    repo_state = collect_repo_state()
     titles = ["rsync-dry-run", "rsync-apply"]
     for index, result in enumerate(results):
         title = titles[index] if index < len(titles) else f"rsync-step-{index + 1}"
@@ -337,6 +429,7 @@ def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
             "status": status,
             "summary": summary,
             "commands": summarize_commands_for_artifact(results),
+            "repo": repo_state,
             "updated_at": now_iso(),
         },
     )
@@ -559,6 +652,7 @@ def prepare_manifest(
             "duration_sec": duration_sec,
             "server_status_poll_ms": UI_POLL_INTERVAL_MS,
         },
+        "repo": collect_repo_state(),
         "started_at": now_iso(),
     }
 

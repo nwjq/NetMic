@@ -62,7 +62,6 @@ WORKFLOW: List[MilestoneSpec] = [
     ),
 ]
 
-
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -123,6 +122,86 @@ def load_run_reports(artifact_root: Path) -> List[Dict[str, object]]:
     return reports
 
 
+def summarize_changed_paths(paths: object) -> str:
+    if not isinstance(paths, list):
+        return ""
+    display_paths = [str(path) for path in paths if str(path).strip()]
+    if not display_paths:
+        return ""
+    preview = display_paths[:3]
+    suffix = "" if len(display_paths) <= 3 else f" 等 {len(display_paths)} 项"
+    return "：" + "、".join(preview) + suffix
+
+
+def normalize_repo_state(repo: object) -> Optional[Dict[str, object]]:
+    if not isinstance(repo, dict):
+        return None
+    if repo.get("available") is False:
+        return None
+    head_commit = str(repo.get("head_commit") or "").strip()
+    if not head_commit:
+        return None
+    fingerprint = str(repo.get("fingerprint") or "").strip() or None
+    return {
+        "head_commit": head_commit,
+        "branch": str(repo.get("branch") or "").strip(),
+        "dirty": bool(repo.get("dirty")),
+        "fingerprint": fingerprint,
+        "changed_paths": list(repo.get("changed_paths") or []),
+    }
+
+
+def current_repo_state() -> Optional[Dict[str, object]]:
+    return normalize_repo_state(run_m0.collect_repo_state())
+
+
+CURRENT_REPO_STATE = current_repo_state()
+
+
+def report_repo_mismatch_note(
+    report: Dict[str, object],
+    current_repo: Optional[Dict[str, object]],
+) -> Optional[str]:
+    if current_repo is None:
+        return None
+
+    manifest = report.get("_manifest", {})
+    if not isinstance(manifest, dict):
+        return "最近一次 run 虽报告 pass，但缺少 manifest，无法确认与当前代码一致"
+
+    report_repo = normalize_repo_state(manifest.get("repo"))
+    if report_repo is None:
+        return "最近一次 run 虽报告 pass，但缺少仓库快照，需按当前代码重新验收"
+
+    report_head = str(report_repo["head_commit"])
+    current_head = str(current_repo["head_commit"])
+    if report_head != current_head:
+        return (
+            "最近一次 run 虽报告 pass，但对应 commit "
+            f"{report_head[:12]} 与当前 {current_head[:12]} 不一致"
+        )
+
+    report_dirty = bool(report_repo["dirty"])
+    current_dirty = bool(current_repo["dirty"])
+    if report_dirty != current_dirty:
+        if current_dirty:
+            return (
+                "最近一次 run 虽报告 pass，但当前工作区仍有未验证改动"
+                + summarize_changed_paths(current_repo.get("changed_paths"))
+            )
+        return "最近一次 run 虽报告 pass，但该产物来自带本地改动的工作区，当前工作区已变化"
+
+    if report_repo.get("fingerprint") != current_repo.get("fingerprint"):
+        if current_dirty:
+            return (
+                "最近一次 run 虽报告 pass，但当前工作区改动集已变化"
+                + summarize_changed_paths(current_repo.get("changed_paths"))
+            )
+        return "最近一次 run 虽报告 pass，但仓库快照与当前代码不一致"
+
+    return None
+
+
 def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
     if report.get("status") != "pass":
         return False
@@ -159,7 +238,12 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
 
 
 def report_completion_note(report: Dict[str, object], milestone_id: str) -> Optional[str]:
-    if report_counts_as_pass(report, milestone_id):
+    base_pass = report_counts_as_pass(report, milestone_id)
+    repo_note = None
+    if report.get("status") == "pass":
+        repo_note = report_repo_mismatch_note(report, CURRENT_REPO_STATE)
+
+    if base_pass and repo_note is None:
         return None
 
     status = str(report.get("status") or "")
@@ -168,6 +252,8 @@ def report_completion_note(report: Dict[str, object], milestone_id: str) -> Opti
         if summary:
             return f"最近一次 run 为 {status}：{summary}"
         return f"最近一次 run 为 {status}"
+    if repo_note is not None and milestone_id != "M3":
+        return repo_note
     if milestone_id != "M3":
         return "最近一次 run 未形成有效 pass"
 
@@ -205,6 +291,8 @@ def report_completion_note(report: Dict[str, object], milestone_id: str) -> Opti
         return "最近一次 run 虽报告 pass，但缺少断线前稳定刷新窗口"
     if not isinstance(stable_after, dict) or not stable_after.get("ok"):
         return "最近一次 run 虽报告 pass，但缺少恢复后稳定刷新窗口"
+    if repo_note is not None:
+        return repo_note
     return "最近一次 run 虽报告 pass，但未满足 coordinator 的 M3 通过条件"
 
 
@@ -249,6 +337,8 @@ def latest_pass_for_milestone(
         if manifest.get("milestone") != milestone_id:
             continue
         if not report_counts_as_pass(report, milestone_id):
+            continue
+        if report_repo_mismatch_note(report, CURRENT_REPO_STATE) is not None:
             continue
         candidates.append(report)
     if not candidates:
@@ -309,6 +399,7 @@ def build_state(
         "updated_at": now_iso(),
         "target": target,
         "artifact_root": display_path(artifact_root),
+        "repo": CURRENT_REPO_STATE,
         "milestones": milestones,
     }
 
@@ -403,6 +494,7 @@ def write_sync_artifacts(
             "status": status,
             "summary": summary,
             "commands": run_m0.summarize_commands_for_artifact(results),
+            "repo": CURRENT_REPO_STATE,
             "updated_at": now_iso(),
         },
     )

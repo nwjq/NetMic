@@ -49,6 +49,7 @@ def build_manifest(env: Dict[str, str], hosts_env: Path, run_id: str, run_dir: P
             "root": env.get("NETMIC_HARNESS_MAC_ROOT", str(ROOT)),
             "input_device": env.get("NETMIC_HARNESS_CLIENT_INPUT_DEVICE", ""),
         },
+        "repo": run_m0.collect_repo_state(),
         "started_at": now_iso(),
     }
 
