@@ -348,6 +348,51 @@ def render_phase_snapshot(snapshot: Dict[str, object], ui_dir: Path, phase: str)
     )
 
 
+def write_partial_recovery(
+    run_dir: Path,
+    phase: str,
+    status: str,
+    summary: str,
+    event_log_path: Path,
+    render_log_path: Path,
+    app_runtime_sec: int,
+    disconnect_after_sec: int,
+    wall_runtime_sec: float,
+    stream_event: Optional[Dict[str, object]] = None,
+    stable_before_event: Optional[Dict[str, object]] = None,
+    reconnect_event: Optional[Dict[str, object]] = None,
+    recovered_event: Optional[Dict[str, object]] = None,
+    steady_after_event: Optional[Dict[str, object]] = None,
+) -> None:
+    backend_events = load_events(event_log_path)
+    render_events = load_events(render_log_path)
+    payload: Dict[str, object] = {
+        "phase": phase,
+        "status": status,
+        "summary": summary,
+        "streaming_event": stream_event,
+        "steady_before_event": stable_before_event,
+        "reconnecting_event": reconnect_event,
+        "recovered_event": recovered_event,
+        "steady_after_event": steady_after_event,
+        "last_backend_event": backend_events[-1] if backend_events else None,
+        "last_render_event": render_events[-1] if render_events else None,
+        "event_count": len(backend_events),
+        "render_event_count": len(render_events),
+        "app_runtime_sec": app_runtime_sec,
+        "disconnect_after_sec": disconnect_after_sec,
+        "post_recover_sec": max(0, app_runtime_sec - disconnect_after_sec),
+        "wall_runtime_sec": wall_runtime_sec,
+    }
+    if reconnect_event is not None:
+        payload["reconnect_visibility"] = analyze_reconnect_visibility(reconnect_event)
+    if reconnect_event is not None and recovered_event is not None:
+        payload["recovery_ms"] = int(recovered_event.get("ts_ms") or 0) - int(
+            reconnect_event.get("ts_ms") or 0
+        )
+    run_m0.write_json(run_dir / "recovery.json", payload)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic M3 harness")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
@@ -543,10 +588,22 @@ def main() -> int:
         )
         if stream_event is None:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase1)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = "真实 netmic-ui 未在窗口内完成前端 streaming 渲染"
             steps.append(run_m0.StepResult("bootstrap-ui", "fail", summary, [run_m0.relative_artifact(client_runtime_log), run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
+            write_partial_recovery(
+                run_dir,
+                "bootstrap-ui",
+                "fail",
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+            )
             run_m0.write_json(
                 run_dir / "report.json",
                 {
@@ -584,6 +641,7 @@ def main() -> int:
         )
         if stable_before_event is None:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase1)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = f"真实 netmic-ui 未达到断线前稳定运行窗口：{disconnect_after_sec}s"
@@ -598,6 +656,18 @@ def main() -> int:
                         run_m0.relative_artifact(render_log_path),
                     ],
                 )
+            )
+            write_partial_recovery(
+                run_dir,
+                "steady-before-disconnect",
+                "fail",
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+                stream_event=stream_event,
             )
             run_m0.write_json(
                 run_dir / "report.json",
@@ -636,9 +706,23 @@ def main() -> int:
         )
         if reconnect_event is None:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = "真实 netmic-ui 未在断线后渲染 reconnecting/connecting"
             steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
+            write_partial_recovery(
+                run_dir,
+                "disconnect-recover",
+                "fail",
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+                stream_event=stream_event,
+                stable_before_event=stable_before_event,
+            )
             run_m0.write_json(
                 run_dir / "report.json",
                 {
@@ -657,11 +741,26 @@ def main() -> int:
         run_m0.append_section(bootstrap_log, "remote-start-server-phase2", server_restart.stdout, server_restart.stderr)
         if server_restart.returncode != 0:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             output = "\n".join(part for part in (server_restart.stdout, server_restart.stderr) if part).strip()
             verdict = run_m0.classify_output(output)
             summary = run_m0.build_command_failure_summary("远端服务端 phase2 重启失败", output)
             steps.append(run_m0.StepResult("disconnect-recover", verdict, summary, [run_m0.relative_artifact(bootstrap_log)]))
+            write_partial_recovery(
+                run_dir,
+                "disconnect-recover",
+                verdict,
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+                stream_event=stream_event,
+                stable_before_event=stable_before_event,
+                reconnect_event=reconnect_event,
+            )
             run_m0.write_json(
                 run_dir / "report.json",
                 {
@@ -685,11 +784,26 @@ def main() -> int:
         )
         if recovered_event is None:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase2)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = "真实 netmic-ui 未在恢复窗口内重新渲染 streaming"
             steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
+            write_partial_recovery(
+                run_dir,
+                "disconnect-recover",
+                "fail",
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+                stream_event=stream_event,
+                stable_before_event=stable_before_event,
+                reconnect_event=reconnect_event,
+            )
             run_m0.write_json(
                 run_dir / "report.json",
                 {
@@ -714,11 +828,27 @@ def main() -> int:
         )
         if steady_after_event is None:
             stop_ui_process(proc)
+            wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase2)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = f"真实 netmic-ui 未达到恢复后稳定运行窗口：{post_recover_sec}s"
             steps.append(run_m0.StepResult("steady-after-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
+            write_partial_recovery(
+                run_dir,
+                "steady-after-recover",
+                "fail",
+                summary,
+                event_log_path,
+                render_log_path,
+                app_runtime_sec,
+                disconnect_after_sec,
+                wall_runtime_sec,
+                stream_event=stream_event,
+                stable_before_event=stable_before_event,
+                reconnect_event=reconnect_event,
+                recovered_event=recovered_event,
+            )
             run_m0.write_json(
                 run_dir / "report.json",
                 {

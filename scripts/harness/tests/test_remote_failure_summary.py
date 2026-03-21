@@ -204,6 +204,17 @@ class RunM3RemoteBootstrapFailureTests(unittest.TestCase):
             self.assertEqual(report["status"], "fail")
             self.assertIn("恢复窗口", report["summary"])
 
+            recovery_path = run_dirs[0].with_name("recovery.json")
+            self.assertTrue(recovery_path.exists())
+            recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+            self.assertEqual(recovery["phase"], "disconnect-recover")
+            self.assertEqual(recovery["status"], "fail")
+            self.assertIn("恢复窗口", recovery["summary"])
+            self.assertEqual(recovery["render_event_count"], 0)
+            self.assertEqual(recovery["streaming_event"]["ts_ms"], 1000)
+            self.assertEqual(recovery["reconnecting_event"]["ts_ms"], 3000)
+            self.assertIsNone(recovery["recovered_event"])
+
 
 if __name__ == "__main__":
     unittest.main()
