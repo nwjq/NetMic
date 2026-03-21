@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "允许 NetMic 主窗口访问核心 Tauri API 与应用内 IPC 命令。",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "get_status",
+    "set_mode",
+    "set_client_config",
+    "set_server_config",
+    "reset_defaults",
+    "start",
+    "stop",
+    "force_disconnect",
+    "virtual_mic_create",
+    "virtual_mic_remove",
+    "clear_logs",
+    "export_logs",
+    "report_harness_render"
+  ]
+}
