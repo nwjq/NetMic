@@ -158,6 +158,56 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
     )
 
 
+def report_completion_note(report: Dict[str, object], milestone_id: str) -> Optional[str]:
+    if report_counts_as_pass(report, milestone_id):
+        return None
+
+    status = str(report.get("status") or "")
+    summary = str(report.get("summary") or "").strip()
+    if status and status != "pass":
+        if summary:
+            return f"最近一次 run 为 {status}：{summary}"
+        return f"最近一次 run 为 {status}"
+    if milestone_id != "M3":
+        return "最近一次 run 未形成有效 pass"
+
+    manifest = report.get("_manifest", {})
+    recovery = report.get("_recovery", {})
+    runtime = manifest.get("runtime", {}) if isinstance(manifest, dict) else {}
+    app_runtime_sec = int(runtime.get("app_runtime_sec") or 0) if isinstance(runtime, dict) else 0
+    wall_runtime_sec = extract_wall_runtime_sec(
+        report,
+        recovery if isinstance(recovery, dict) else {},
+    )
+    recovery_ms = int(
+        (recovery.get("recovery_ms") if isinstance(recovery, dict) else 0)
+        or report.get("recovery_ms")
+        or 0
+    )
+    stable_before = recovery.get("stable_before", {}) if isinstance(recovery, dict) else {}
+    stable_after = recovery.get("stable_after", {}) if isinstance(recovery, dict) else {}
+
+    if app_runtime_sec < M3_MIN_APP_RUNTIME_SEC:
+        return (
+            "最近一次 run 虽报告 pass，但只记录了 "
+            f"{app_runtime_sec}s，未达到 M3 要求的 {M3_MIN_APP_RUNTIME_SEC}s"
+        )
+    if wall_runtime_sec is None:
+        return "最近一次 run 虽报告 pass，但缺少真实 wall-clock 运行时长"
+    if wall_runtime_sec < M3_MIN_APP_RUNTIME_SEC:
+        return (
+            "最近一次 run 虽报告 pass，但真实 wall-clock 仅 "
+            f"{wall_runtime_sec:.1f}s，未达到 M3 要求的 {M3_MIN_APP_RUNTIME_SEC}s"
+        )
+    if recovery_ms <= 0 or recovery_ms > M3_MAX_RECOVERY_MS:
+        return f"最近一次 run 虽报告 pass，但恢复时长 {recovery_ms}ms 不满足 M3 门槛"
+    if not isinstance(stable_before, dict) or not stable_before.get("ok"):
+        return "最近一次 run 虽报告 pass，但缺少断线前稳定刷新窗口"
+    if not isinstance(stable_after, dict) or not stable_after.get("ok"):
+        return "最近一次 run 虽报告 pass，但缺少恢复后稳定刷新窗口"
+    return "最近一次 run 虽报告 pass，但未满足 coordinator 的 M3 通过条件"
+
+
 def parse_iso_datetime(value: object) -> Optional[datetime]:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -207,6 +257,24 @@ def latest_pass_for_milestone(
     return candidates[-1]
 
 
+def latest_report_for_milestone(
+    reports: List[Dict[str, object]],
+    milestone_id: str,
+) -> Optional[Dict[str, object]]:
+    candidates: List[Dict[str, object]] = []
+    for report in reports:
+        manifest = report.get("_manifest", {})
+        if not isinstance(manifest, dict):
+            continue
+        if manifest.get("milestone") != milestone_id:
+            continue
+        candidates.append(report)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: str(item.get("finished_at", "")))
+    return candidates[-1]
+
+
 def build_state(
     artifact_root: Path,
     reports: List[Dict[str, object]],
@@ -215,6 +283,7 @@ def build_state(
     milestones = []
     for spec in WORKFLOW:
         latest = latest_pass_for_milestone(reports, spec.id)
+        latest_attempt = latest_report_for_milestone(reports, spec.id)
         milestones.append(
             {
                 "id": spec.id,
@@ -224,6 +293,15 @@ def build_state(
                 "latest_pass_run": latest.get("run_id") if latest else None,
                 "latest_report": display_path(Path(str(latest["_report_path"])))
                 if latest
+                else None,
+                "latest_attempt_run": latest_attempt.get("run_id") if latest_attempt else None,
+                "latest_attempt_status": latest_attempt.get("status") if latest_attempt else None,
+                "latest_attempt_summary": latest_attempt.get("summary") if latest_attempt else None,
+                "latest_attempt_report": display_path(Path(str(latest_attempt["_report_path"])))
+                if latest_attempt
+                else None,
+                "note": report_completion_note(latest_attempt, spec.id)
+                if latest is None and latest_attempt
                 else None,
             }
         )

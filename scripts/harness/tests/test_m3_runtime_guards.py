@@ -49,6 +49,32 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         )
         self.assertTrue(coordinator.report_counts_as_pass(report, "M3"))
 
+    def test_completion_note_explains_short_debug_run(self):
+        report = self.make_report(
+            started_at="2026-03-21T23:01:55+08:00",
+            finished_at="2026-03-21T23:02:16+08:00",
+            wall_runtime_sec=24.0,
+        )
+        report["_manifest"]["runtime"]["app_runtime_sec"] = 24
+
+        note = coordinator.report_completion_note(report, "M3")
+
+        self.assertIn("24s", note)
+        self.assertIn("1800s", note)
+
+    def test_completion_note_preserves_latest_fail_summary(self):
+        report = {
+            "status": "blocked",
+            "summary": "远端工作区同步预检失败：ssh: connect to host 192.168.11.1 port 22: Operation not permitted",
+            "_manifest": {"milestone": "M3", "runtime": {"app_runtime_sec": 1800}},
+            "_recovery": {},
+        }
+
+        note = coordinator.report_completion_note(report, "M3")
+
+        self.assertIn("最近一次 run 为 blocked", note)
+        self.assertIn("Operation not permitted", note)
+
 
 class RunM3VerdictTests(unittest.TestCase):
     def setUp(self):

@@ -50,6 +50,7 @@ Harness 运行前，默认已由上游文档确定：
 1. `prepare`
    - 读取 `.harness/hosts.env`
    - 校验本地与远端工作目录、端口、设备名等信息
+   - 对 `NETMIC_HARNESS_LINUX_ROOT` 做安全校验，避免把带 `--delete` 的同步指向系统目录或非仓库目录
    - 先比对本地工作区与 Linux 远端仓库；若未同步则先同步，再进入后续阶段
 2. `bootstrap-linux`
    - 自检 PipeWire/Pulse 环境
@@ -76,6 +77,7 @@ Harness 运行前，默认已由上游文档确定：
   - 扫描 `.harness/runs/*/report.json`
   - 每次启动先检查本地工作区是否已同步到 Linux 远端仓库，必要时先执行同步
   - 判断每个里程碑是否已有 `pass`
+  - 若某个里程碑仍是 `pending`，在 `.harness/coordinator_state.json` 中记录最近一次尝试及原因
   - 从第一个未完成里程碑继续循环调度 runner，直到目标里程碑或真实 `fail/blocked`
   - runner 缺失时输出 `fail`，而不是把“未实现”误判成“已完成”
 - `M0`：`scripts/harness/run_m0.py`
@@ -201,6 +203,8 @@ UI 对齐要求：
 2. `sync-remote`
    - 对比本地工作区与 Linux 侧仓库
    - 若不一致，则通过 `rsync` 先把远端工作区同步到当前本地状态
+   - 同步前必须先校验远端仓库路径安全；若路径可疑则直接 `blocked`
+   - `ssh/rsync` 必须在超时窗口内返回；超时同样判为 `blocked`
    - `.harness/hosts.env`、`.harness/runs/`、`.codex/`、`target/`、`node_modules/` 不进入同步范围
 3. `bootstrap-linux`
    - `scripts/linux/audio_selfcheck.sh --json`
@@ -233,6 +237,7 @@ UI 对齐要求：
 补充口径：
 
 - `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
+- 若最新 M3 产物只是调试短跑或缺少 wall-clock 证据，`coordinator_state.json` 应明确写出“不计 pass”的原因
 - coordinator 自身的远端同步预检同样会生成产物；若 `rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要
 
 当前已存在的专门 runner：

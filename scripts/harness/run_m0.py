@@ -19,7 +19,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Tuple
 
 
@@ -29,6 +29,7 @@ DEFAULT_DURATION_SEC = 300
 DEFAULT_SERVER_PORT = 43000
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 UI_POLL_INTERVAL_MS = 1000
+DEFAULT_REMOTE_TIMEOUT_SEC = 120
 DEFAULT_SYNC_EXCLUDES = (
     ".git/",
     ".harness/hosts.env",
@@ -158,6 +159,46 @@ def require_local_tools(password_auth: bool, needs_node: bool, needs_rsync: bool
     return ("pass", "本地依赖检查通过")
 
 
+def remote_timeout_sec(env: Dict[str, str]) -> int:
+    raw = env.get("NETMIC_HARNESS_REMOTE_TIMEOUT_SEC", "").strip()
+    if not raw:
+        return DEFAULT_REMOTE_TIMEOUT_SEC
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_REMOTE_TIMEOUT_SEC
+    return max(5, value)
+
+
+def validate_remote_workspace_root(env: Dict[str, str]) -> Tuple[str, str]:
+    remote_root_raw = env.get("NETMIC_HARNESS_LINUX_ROOT", "").strip()
+    if not remote_root_raw:
+        return ("blocked", "缺少现场配置：NETMIC_HARNESS_LINUX_ROOT")
+    if not remote_root_raw.startswith("/"):
+        return ("blocked", f"远端仓库路径必须为绝对路径：{remote_root_raw}")
+
+    remote_root = PurePosixPath(remote_root_raw)
+    dangerous_roots = {
+        PurePosixPath("/"),
+        PurePosixPath("/home"),
+        PurePosixPath("/root"),
+        PurePosixPath("/tmp"),
+        PurePosixPath("/usr"),
+        PurePosixPath("/var"),
+        PurePosixPath("/opt"),
+    }
+    if remote_root in dangerous_roots:
+        return ("blocked", f"远端仓库路径不安全，拒绝执行同步：{remote_root_raw}")
+    if len(remote_root.parts) < 3:
+        return ("blocked", f"远端仓库路径层级过浅，拒绝执行同步：{remote_root_raw}")
+    if remote_root.name != ROOT.name:
+        return (
+            "blocked",
+            f"远端仓库路径末级目录必须为 {ROOT.name}：{remote_root_raw}",
+        )
+    return ("pass", "远端仓库路径校验通过")
+
+
 def build_ssh_transport(env: Dict[str, str]) -> List[str]:
     port = env.get("NETMIC_HARNESS_LINUX_PORT", "22") or "22"
     ssh_key = env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
@@ -240,8 +281,15 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     local_root = coordinator_root_from_env(env)
     if not local_root.exists():
         return ("blocked", f"本地 Coordinator 根目录不存在：{local_root}", [])
+    remote_root_status, remote_root_summary = validate_remote_workspace_root(env)
+    if remote_root_status != "pass":
+        return (remote_root_status, remote_root_summary, [])
 
-    dry_run_result = run_command(build_rsync_command(env, local_root, dry_run=True))
+    timeout_sec = remote_timeout_sec(env)
+    dry_run_result = run_command(
+        build_rsync_command(env, local_root, dry_run=True),
+        timeout_sec=timeout_sec,
+    )
     combined = "\n".join(part for part in (dry_run_result.stdout, dry_run_result.stderr) if part).strip()
     if dry_run_result.returncode != 0:
         detail = summarize_command_issue(combined)
@@ -252,7 +300,10 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     if not combined:
         return ("pass", "远端工作区已与本地同步", [dry_run_result])
 
-    apply_result = run_command(build_rsync_command(env, local_root, dry_run=False))
+    apply_result = run_command(
+        build_rsync_command(env, local_root, dry_run=False),
+        timeout_sec=timeout_sec,
+    )
     combined = "\n".join(part for part in (apply_result.stdout, apply_result.stderr) if part).strip()
     if apply_result.returncode != 0:
         detail = summarize_command_issue(combined)
@@ -296,21 +347,46 @@ def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
     )
 
 
-def run_command(command: List[str]) -> CommandResult:
-    proc = subprocess.run(
-        command,
-        cwd=str(ROOT),
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return CommandResult(
-        command=command,
-        returncode=proc.returncode,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
-    )
+def decode_output(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def run_command(command: List[str], timeout_sec: int | None = None) -> CommandResult:
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
+        return CommandResult(
+            command=command,
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
+    except subprocess.TimeoutExpired as exc:
+        timeout_hint = (
+            f"command timed out after {timeout_sec}s"
+            if timeout_sec is not None
+            else "command timed out"
+        )
+        stdout = decode_output(exc.stdout)
+        stderr = decode_output(exc.stderr).strip()
+        stderr = f"{stderr}\n{timeout_hint}".strip() if stderr else timeout_hint
+        return CommandResult(
+            command=command,
+            returncode=124,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
 
 def redact_command_for_artifact(command: List[str]) -> List[str]:
@@ -342,7 +418,7 @@ def run_remote(env: Dict[str, str], script: str) -> CommandResult:
     ssh_base = build_ssh_base(env)
     remote_script = f"cd {shlex.quote(linux_root)} && {script}"
     command = ssh_base + [f"bash -lc {shlex.quote(remote_script)}"]
-    return run_command(command)
+    return run_command(command, timeout_sec=remote_timeout_sec(env))
 
 
 def build_snapshot(

@@ -27,7 +27,7 @@ set -euo pipefail
 joined="$*"
 case "$joined" in
   *"&& pwd'"*)
-    printf '/srv/netmic\n'
+    printf '/srv/NetMic\n'
     exit 0
     ;;
   *"scripts/linux/audio_selfcheck.sh --json"*)
@@ -60,7 +60,7 @@ NETMIC_HARNESS_MAC_ROOT=$ROOT
 NETMIC_HARNESS_LINUX_HOST=127.0.0.1
 NETMIC_HARNESS_LINUX_PORT=22
 NETMIC_HARNESS_LINUX_USER=tester
-NETMIC_HARNESS_LINUX_ROOT=/srv/netmic
+NETMIC_HARNESS_LINUX_ROOT=/srv/NetMic
 NETMIC_HARNESS_SERVER_HOST=127.0.0.1
 NETMIC_HARNESS_SERVER_PORT=43000
 NETMIC_HARNESS_ARTIFACT_DIR=$artifact_root

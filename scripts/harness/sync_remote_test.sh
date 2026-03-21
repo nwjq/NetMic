@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_m0.py 远端同步 helper 最小自测：覆盖“有变更则同步”和“Operation not permitted -> blocked”。
+# run_m0.py 远端同步 helper 最小自测：覆盖同步、危险路径保护与超时阻塞。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,6 +28,10 @@ if [[ "$joined" == *"--dry-run"* ]]; then
     blocked)
       printf 'ssh: connect to host 192.168.11.1 port 22: Operation not permitted\n' >&2
       exit 255
+      ;;
+    hang)
+      sleep "${RSYNC_TEST_SLEEP_SEC:-5}"
+      exit 0
       ;;
     *)
       printf '>f+++++++++ README.md\n'
@@ -121,5 +125,64 @@ run_case changes pass "已将本地工作区同步到远端" 2
 run_case clean pass "远端工作区已与本地同步" 1
 run_case blocked blocked "Operation not permitted" 1
 run_case apply-fail fail "rsync: write failed" 2
+
+PATH="$stub_dir:$PATH" \
+PYTHONPATH="$ROOT/scripts/harness" \
+python3 - "$workspace" <<'PY'
+import pathlib
+import sys
+
+import run_m0
+
+workspace = pathlib.Path(sys.argv[1])
+env = {
+    "NETMIC_HARNESS_COORDINATOR_ROOT": str(workspace),
+    "NETMIC_HARNESS_LINUX_HOST": "192.168.11.1",
+    "NETMIC_HARNESS_LINUX_PORT": "22",
+    "NETMIC_HARNESS_LINUX_USER": "arc",
+    "NETMIC_HARNESS_LINUX_ROOT": "/home/arc/code",
+    "NETMIC_HARNESS_LINUX_PASSWORD": "top-secret",
+}
+
+status, summary, results = run_m0.sync_remote_workspace(env)
+assert status == "blocked", (status, summary)
+assert "末级目录必须为 NetMic" in summary, summary
+assert results == [], results
+
+server_dir = workspace / "artifacts" / "unsafe-root"
+step = run_m0.run_remote_sync_step(env, server_dir)
+assert step.status == "blocked", step
+state = run_m0.json.loads((server_dir / "remote-sync.json").read_text(encoding="utf-8"))
+assert state["commands"] == [], state
+PY
+
+PATH="$stub_dir:$PATH" \
+RSYNC_TEST_MODE=hang \
+RSYNC_TEST_SLEEP_SEC=6 \
+RSYNC_TEST_LOG="$tmpdir/hang.log" \
+PYTHONPATH="$ROOT/scripts/harness" \
+python3 - "$workspace" <<'PY'
+import pathlib
+import sys
+
+import run_m0
+
+workspace = pathlib.Path(sys.argv[1])
+env = {
+    "NETMIC_HARNESS_COORDINATOR_ROOT": str(workspace),
+    "NETMIC_HARNESS_LINUX_HOST": "192.168.11.1",
+    "NETMIC_HARNESS_LINUX_PORT": "22",
+    "NETMIC_HARNESS_LINUX_USER": "arc",
+    "NETMIC_HARNESS_LINUX_ROOT": "/home/arc/code/NetMic",
+    "NETMIC_HARNESS_LINUX_PASSWORD": "top-secret",
+    "NETMIC_HARNESS_REMOTE_TIMEOUT_SEC": "5",
+}
+
+status, summary, results = run_m0.sync_remote_workspace(env)
+assert status == "blocked", (status, summary)
+assert "timed out after 5s" in summary, summary
+assert len(results) == 1, results
+assert results[0].returncode == 124, results[0]
+PY
 
 echo "[ok] sync_remote helper 最小测试通过"

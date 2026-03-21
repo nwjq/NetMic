@@ -29,6 +29,7 @@
 - `NETMIC_HARNESS_LINUX_ROOT`
   - 默认值：未设置
   - 用途：Linux 侧仓库路径。
+  - 约束：必须为绝对路径，且应指向远端 NetMic 仓库目录本身；Harness 会拒绝把带 `--delete` 的同步指向过浅目录或非仓库目录。
 - `NETMIC_HARNESS_LINUX_PASSWORD`
   - 默认值：未设置
   - 用途：Linux 连接密码；可选。
@@ -55,6 +56,10 @@
 - `NETMIC_HARNESS_SSH_OPTS`
   - 默认值：未设置
   - 用途：附加 SSH 参数，例如 `-o StrictHostKeyChecking=no`。
+- `NETMIC_HARNESS_REMOTE_TIMEOUT_SEC`
+  - 默认值：`120`
+  - 用途：Coordinator / runner 调用 `ssh`、`rsync` 等远端命令时的单次命令超时（秒）。
+  - 说明：最小按 `5` 秒处理；超时会直接判为 `blocked`，并把底层超时报错写入产物。
 
 ## Client（netmic-client）
 
