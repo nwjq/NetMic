@@ -364,8 +364,9 @@ def main() -> int:
     server_start = run_m1.remote_start_server(env, remote_phase1, port)
     run_m0.append_section(bootstrap_log, "remote-start-server-phase1", server_start.stdout, server_start.stderr)
     if server_start.returncode != 0:
-        verdict = run_m0.classify_output("\n".join([server_start.stdout, server_start.stderr]))
-        summary = "远端服务端 phase1 启动失败"
+        output = "\n".join(part for part in (server_start.stdout, server_start.stderr) if part).strip()
+        verdict = run_m0.classify_output(output)
+        summary = run_m0.build_command_failure_summary("远端服务端 phase1 启动失败", output)
         steps.append(run_m0.StepResult("bootstrap-linux", verdict, summary, [run_m0.relative_artifact(bootstrap_log)]))
         run_m0.write_json(
             run_dir / "report.json",
@@ -569,13 +570,15 @@ def main() -> int:
             proc.terminate()
             proc.wait(timeout=5)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
-            summary = "远端服务端 phase2 重启失败"
-            steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(bootstrap_log)]))
+            output = "\n".join(part for part in (server_restart.stdout, server_restart.stderr) if part).strip()
+            verdict = run_m0.classify_output(output)
+            summary = run_m0.build_command_failure_summary("远端服务端 phase2 重启失败", output)
+            steps.append(run_m0.StepResult("disconnect-recover", verdict, summary, [run_m0.relative_artifact(bootstrap_log)]))
             run_m0.write_json(
                 run_dir / "report.json",
                 {
                     "run_id": run_id,
-                    "status": "fail",
+                    "status": verdict,
                     "summary": summary,
                     "started_at": manifest["started_at"],
                     "finished_at": now_iso(),
@@ -583,7 +586,7 @@ def main() -> int:
                 },
             )
             print(summary)
-            return 1
+            return 2 if verdict == "blocked" else 1
 
         recovered_index, recovered_event = wait_for_event(
             render_log_path,

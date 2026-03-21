@@ -358,8 +358,9 @@ def main() -> int:
     server_start = remote_start_server(env, remote_dir, port)
     run_m0.append_section(bootstrap_log, "remote-start-server", server_start.stdout, server_start.stderr)
     if server_start.returncode != 0:
-        summary = "远端服务端启动失败"
-        verdict = run_m0.classify_output("\n".join([server_start.stdout, server_start.stderr]))
+        output = "\n".join(part for part in (server_start.stdout, server_start.stderr) if part).strip()
+        summary = run_m0.build_command_failure_summary("远端服务端启动失败", output)
+        verdict = run_m0.classify_output(output)
         steps.append(run_m0.StepResult("bootstrap-linux", verdict, summary, [run_m0.relative_artifact(bootstrap_log)]))
         logs.append(run_m0.step_log("error", summary))
         ui_step = run_m0.run_ui_verify(build_snapshot(env, {}, verdict, summary, logs), ui_dir)

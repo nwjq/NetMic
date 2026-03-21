@@ -328,8 +328,9 @@ def run_case(
     server_start = run_m1.remote_start_server(env, remote_dir, port)
     run_m0.append_section(bootstrap_log, "remote-start-server", server_start.stdout, server_start.stderr)
     if server_start.returncode != 0:
-        verdict = run_m0.classify_output("\n".join([server_start.stdout, server_start.stderr]))
-        summary = "远端服务端启动失败"
+        output = "\n".join(part for part in (server_start.stdout, server_start.stderr) if part).strip()
+        verdict = run_m0.classify_output(output)
+        summary = run_m0.build_command_failure_summary("远端服务端启动失败", output)
     else:
         startup_status = wait_for_server_ready(env, port, f"{run_dir.name}-{case.id}-startup")
         run_m0.write_json(status_json_path, {"startup": startup_status})

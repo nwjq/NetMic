@@ -141,6 +141,13 @@ def summarize_command_issue(output: str) -> str:
     return ""
 
 
+def build_command_failure_summary(summary_prefix: str, output: str) -> str:
+    detail = summarize_command_issue(output)
+    if not detail:
+        return summary_prefix
+    return f"{summary_prefix}：{detail}"
+
+
 def require_local_tools(password_auth: bool, needs_node: bool, needs_rsync: bool = False) -> Tuple[str, str]:
     missing: List[str] = []
     if shutil.which("ssh") is None:
@@ -292,10 +299,7 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     )
     combined = "\n".join(part for part in (dry_run_result.stdout, dry_run_result.stderr) if part).strip()
     if dry_run_result.returncode != 0:
-        detail = summarize_command_issue(combined)
-        summary = "远端工作区同步预检失败"
-        if detail:
-            summary = f"{summary}：{detail}"
+        summary = build_command_failure_summary("远端工作区同步预检失败", combined)
         return (classify_output(combined), summary, [dry_run_result])
     if not combined:
         return ("pass", "远端工作区已与本地同步", [dry_run_result])
@@ -306,10 +310,7 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     )
     combined = "\n".join(part for part in (apply_result.stdout, apply_result.stderr) if part).strip()
     if apply_result.returncode != 0:
-        detail = summarize_command_issue(combined)
-        summary = "远端工作区同步失败"
-        if detail:
-            summary = f"{summary}：{detail}"
+        summary = build_command_failure_summary("远端工作区同步失败", combined)
         return (
             classify_output(combined),
             summary,
