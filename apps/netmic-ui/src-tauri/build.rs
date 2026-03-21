@@ -52,7 +52,10 @@ fn build_netmic_server() {
     };
     let built_server = server_target_dir.join(&profile).join(bin_name);
     if !built_server.exists() {
-        panic!("netmic-server binary not found at {}", built_server.display());
+        panic!(
+            "netmic-server binary not found at {}",
+            built_server.display()
+        );
     }
 
     let target_profile_dir = target_dir.join(&profile);
@@ -121,7 +124,10 @@ fn build_netmic_client() {
     };
     let built_client = client_target_dir.join(&profile).join(bin_name);
     if !built_client.exists() {
-        panic!("netmic-client binary not found at {}", built_client.display());
+        panic!(
+            "netmic-client binary not found at {}",
+            built_client.display()
+        );
     }
 
     let target_profile_dir = target_dir.join(&profile);

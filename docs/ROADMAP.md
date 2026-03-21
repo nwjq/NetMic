@@ -26,6 +26,13 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 - 结果可判定为 `pass/fail/blocked`
 - Server UI 能显示虚拟麦状态与相关错误
 
+**当前实现入口（2026-03-21）**
+- `scripts/harness/run_m0.py`
+  - 统一读取 `.harness/hosts.env`
+  - 远端执行 `audio_selfcheck.sh`、`virtual_mic.sh create|status`、`virtual_mic_smoke.sh`
+  - 产物落在 `.harness/runs/<run_id>/`
+  - 同步生成 `ui/snapshot.json`、`visible-status.json`、`visible-config.json`、`visible-logs.json`、`refresh-check.json`
+
 ---
 
 ## Milestone 1：端到端基本通路（Client → Server）
@@ -45,6 +52,13 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 - 产物中至少包含 client/server 日志、握手结果、服务端状态与音频 dump
 - 默认参数作为 golden path 固定下来
 - Client / Server UI 能正确显示状态与基本连接信息，并在状态变化后及时刷新
+
+**当前实现入口（2026-03-21）**
+- `scripts/harness/run_m1.py`
+  - 远端拉起 `netmic-server`
+  - 本地按 Harness 环境启动 `netmic-client`
+  - 观测服务端运行中的 `streaming` 状态
+  - 回收 `audio_dump.pcm`、状态与 UI 可见产物
 
 ---
 
@@ -67,6 +81,12 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 - UI/日志/报告对同一组生效参数达成一致
 - 参数页、状态页、fallback 展示保持一致
 
+**当前实现入口（2026-03-21）**
+- `scripts/harness/run_m2.py`
+  - 执行合法参数与 fallback 参数矩阵
+  - 回收 `client/session-report.json`
+  - 校验 UI 参数页、状态页、fallback 展示一致
+
 ---
 
 ## Milestone 3：稳定性与可用性
@@ -85,6 +105,13 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 - 输出统一稳定性报告
 - 必须包含真实 App 运行验收，而不是只跑单元测试
 - UI 在长时间运行和恢复场景下持续刷新，过期状态有明确提示
+
+**当前实现入口（2026-03-21）**
+- `scripts/harness/run_m3.py`
+  - 启动真实 `netmic-ui`
+  - 默认执行 30 分钟真实 App 长测
+  - 自动打断并恢复远端 `netmic-server`
+  - 以真实 App snapshot/event log 校验 reconnect 与长时刷新
 
 ---
 

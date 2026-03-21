@@ -69,6 +69,35 @@ Harness 运行前，默认已由上游文档确定：
    - 从本次 run 的产物、日志、修复路径中提炼可复用技巧
    - 若满足复用条件，则新增或更新 `.codex/skills/<skill-name>/SKILL.md`
 
+当前已落地入口：
+
+- 总控：`scripts/harness/coordinator.py`
+  - 扫描 `.harness/runs/*/report.json`
+  - 判断每个里程碑是否已有 `pass`
+  - 从第一个未完成里程碑继续循环调度 runner，直到目标里程碑或真实 `fail/blocked`
+  - runner 缺失时输出 `fail`，而不是把“未实现”误判成“已完成”
+- `M0`：`scripts/harness/run_m0.py`
+  - 读取 `.harness/hosts.env`
+  - 通过 SSH 进入 Linux 侧仓库
+  - 执行 `audio_selfcheck.sh` / `virtual_mic.sh create|status` / `virtual_mic_smoke.sh`
+  - 生成 `manifest.json` / `report.json` / `server/*` / `ui/*`
+  - 输出统一 `pass` / `fail` / `blocked`
+- `M1`：`scripts/harness/run_m1.py`
+  - 远端启动 `netmic-server`
+  - 本地启动 `netmic-client`
+  - 通过远端 loopback 查询 `server_status`
+  - 回收 `client/server` 日志、`status.json`、`audio_dump.pcm`
+  - 生成 `ui/*` 产物并输出统一 verdict
+- `M2`：`scripts/harness/run_m2.py`
+  - 以参数矩阵驱动 `netmic-client`
+  - 回收 `session-report.json`、`audio_dump.pcm` 与 UI 可见产物
+  - 校验请求参数 / 生效参数 / fallback / UI 展示一致
+- `M3`：`scripts/harness/run_m3.py`
+  - 本地启动真实 `netmic-ui`（Harness 自动拉起）
+  - 默认执行 30 分钟真实 App 长测，并在中途打断/恢复远端 `netmic-server`
+  - 校验断线前/恢复后的 snapshot 刷新连续性与稳定窗口
+  - 回收真实 App 的 snapshot/event log、phase1/phase2 音频 dump 与 UI 恢复产物
+
 ## 5. 用户补充信息入口
 
 所有需要用户补充、且不应写死在仓库中的信息，统一放在：
@@ -112,6 +141,7 @@ Harness 运行前，默认已由上游文档确定：
   server/
     bootstrap.log
     runtime.log
+    selfcheck.json
     status.json
     audio_dump.pcm
   ui/
@@ -126,6 +156,7 @@ Harness 运行前，默认已由上游文档确定：
 
 - 先保证“有统一产物”，再追求格式复杂度。
 - 所有 verdict 必须能追溯到对应 run 的产物。
+- 若当前里程碑暂未要求音频 dump，可先不生成 `audio_dump.pcm`，但必须补齐对应阶段的关键日志与状态文件。
 
 ## 7. 里程碑与 Harness 对齐
 
@@ -150,6 +181,52 @@ UI 对齐要求：
 - Harness 给出 `fail` 后，应继续进入修复循环，而不是停下。
 - 后台状态正确但 UI 显示错误、缺失或刷新过慢，Harness 不应给出 `pass`。
 - 单元测试通过但真实 App 运行未验证，M3 不应给出 `pass`。
+
+### M0 当前 run 口径
+
+`scripts/harness/run_m0.py` 当前将 M0 切成以下检查：
+
+1. `prepare`
+   - 校验 `.harness/hosts.env`
+   - 校验本机依赖（`ssh`、必要时 `sshpass`、`node`）
+2. `bootstrap-linux`
+   - `scripts/linux/audio_selfcheck.sh --json`
+   - `scripts/linux/virtual_mic.sh create`
+   - `scripts/linux/virtual_mic.sh status --json`
+3. `run`
+   - `scripts/linux/virtual_mic_smoke.sh --duration <sec>`
+   - 若日志显示“跳过音频写入”，该 run 不能判为 `pass`
+4. `ui-verify`
+   - 根据服务端状态生成 `ui/snapshot.json`
+   - 用 `scripts/harness/render_ui_artifacts.mjs` 生成可见产物
+
+判定规则：
+
+- 自检、虚拟麦就绪、测试音实际写入、UI 产物齐备时，才可判定 `pass`
+- 缺少 SSH / `sshpass` / `node`、缺少 PipeWire/Pulse 依赖、Linux 不可达等，判定 `blocked`
+- 其余执行错误判定为 `fail`
+
+### 顶层 coordinator 口径
+
+`scripts/harness/coordinator.py` 不直接代替各里程碑 runner，它负责：
+
+1. 扫描 `.harness/runs/*/report.json`
+2. 结合 `manifest.json` / `recovery.json` 判断 `M0 -> M1 -> M2 -> M3` 中第一个未完成里程碑
+3. 调用对应 runner
+4. 若 runner 返回 `pass`，继续推进下一里程碑
+5. 若 runner 返回 `blocked`，只在真实现场阻塞时暂停
+6. 若 runner 缺失或代码路径不存在，判定 `fail`
+
+补充口径：
+
+- `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
+
+当前已存在的专门 runner：
+
+- `M0`：`scripts/harness/run_m0.py`
+- `M1`：`scripts/harness/run_m1.py`
+- `M2`：`scripts/harness/run_m2.py`
+- `M3`：`scripts/harness/run_m3.py`
 
 ## 8. 阻塞分类
 

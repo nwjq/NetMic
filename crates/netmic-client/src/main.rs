@@ -5,10 +5,13 @@
 //! - 先使用共享默认参数，后续再接入采集/发送链路。
 
 use std::env;
+use std::fs;
 use std::net::UdpSocket;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use netmic_client::{AudioPipeline, Pcm16Frame};
+use netmic_proto::config::{normalize_session_params, FallbackEvent};
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
@@ -32,6 +35,20 @@ const ENV_DEMO_SEND: &str = "NETMIC_CLIENT_DEMO_SEND";
 const ENV_STREAM_SECS: &str = "NETMIC_CLIENT_STREAM_SECS";
 /// 心跳间隔（毫秒，0 表示禁用）。
 const ENV_HEARTBEAT_INTERVAL_MS: &str = "NETMIC_CLIENT_HEARTBEAT_MS";
+/// 输入设备名（为空则走系统默认）。
+const ENV_INPUT_DEVICE: &str = "NETMIC_CLIENT_INPUT_DEVICE";
+/// 会话参数：编码。
+const ENV_CODEC: &str = "NETMIC_CLIENT_CODEC";
+/// 会话参数：采样率。
+const ENV_SAMPLE_RATE_HZ: &str = "NETMIC_CLIENT_SAMPLE_RATE_HZ";
+/// 会话参数：chunk。
+const ENV_CHUNK_MS: &str = "NETMIC_CLIENT_CHUNK_MS";
+/// 会话参数：Opus 码率。
+const ENV_OPUS_BITRATE_KBPS: &str = "NETMIC_CLIENT_OPUS_BITRATE_KBPS";
+/// 会话参数：jitter buffer。
+const ENV_JITTER_BUFFER_MS: &str = "NETMIC_CLIENT_JITTER_BUFFER_MS";
+/// Harness 结构化参数产物路径。
+const ENV_SESSION_REPORT: &str = "NETMIC_CLIENT_SESSION_REPORT";
 /// 重连窗口目标（MVP 要求 10 秒内恢复）。
 const RECONNECT_WINDOW_SECS: u64 = 10;
 /// 演示发送失败后的重试间隔。
@@ -50,12 +67,16 @@ fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let params = SessionParams::mvp_default();
-    info!(?params, "netmic-client skeleton started");
+    let resolved = resolve_session_params_from_env();
+    info!(
+        requested = ?resolved.requested,
+        effective = ?resolved.effective,
+        "netmic-client skeleton started"
+    );
     println!("netmic-client skeleton ready");
 
     if should_demo_send() {
-        if let Err(err) = stream_with_reconnect(&params) {
+        if let Err(err) = stream_with_reconnect(&resolved) {
             warn!(%err, "failed to send demo datagrams");
         }
     } else {
@@ -79,8 +100,15 @@ fn server_addr_from_env() -> String {
     env::var(ENV_SERVER_ADDR).unwrap_or_else(|_| DEFAULT_SERVER_ADDR.to_string())
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedSessionParams {
+    requested: SessionParams,
+    effective: SessionParams,
+    fallbacks: Vec<FallbackEvent>,
+}
+
 /// 发送持续流（含心跳）+ 重连骨架。
-fn stream_with_reconnect(params: &SessionParams) -> Result<(), String> {
+fn stream_with_reconnect(resolved: &ResolvedSessionParams) -> Result<(), String> {
     let server_addr = server_addr_from_env();
     let socket =
         UdpSocket::bind("0.0.0.0:0").map_err(|err| format!("bind udp socket failed: {err}"))?;
@@ -98,7 +126,8 @@ fn stream_with_reconnect(params: &SessionParams) -> Result<(), String> {
         match handshake_and_stream(
             &socket,
             &server_addr,
-            params,
+            resolved,
+            input_device_name_from_env(),
             &mut ctx.metrics,
             heartbeat_interval,
             stream_limit,
@@ -160,7 +189,8 @@ fn build_audio_datagram(
 fn handshake_and_stream(
     socket: &UdpSocket,
     server_addr: &str,
-    params: &SessionParams,
+    resolved: &ResolvedSessionParams,
+    input_device_name: Option<String>,
     metrics: &mut ClientMetrics,
     heartbeat_interval: Option<Duration>,
     stream_limit: Option<Duration>,
@@ -168,7 +198,7 @@ fn handshake_and_stream(
     let request = HandshakeRequest {
         session_id: format!("session-{}", now_ms()),
         client_name: "netmic-client".to_string(),
-        requested: params.clone(),
+        requested: resolved.requested.clone(),
         token: None,
     };
     let control = build_handshake_datagram(&request)?;
@@ -188,9 +218,16 @@ fn handshake_and_stream(
         return Err("server rejected handshake (busy)".to_string());
     }
     info!(?response.effective, "handshake accepted with effective params");
+    write_session_report(
+        &resolved.requested,
+        &resolved.effective,
+        &resolved.fallbacks,
+        Some(&response.effective),
+    )?;
 
-    let mut pipeline = AudioPipeline::new(&response.effective)
-        .map_err(|err| format!("init audio pipeline failed: {err}"))?;
+    let mut pipeline =
+        AudioPipeline::new_with_device(&response.effective, input_device_name.as_deref())
+            .map_err(|err| format!("init audio pipeline failed: {err}"))?;
     let session_id = response.session_id.clone();
     let mut seq: u64 = 0;
     let mut heartbeat_seq: u64 = 0;
@@ -308,6 +345,96 @@ fn stream_duration_from_env() -> Option<Duration> {
         },
         Err(_) => None,
     }
+}
+
+fn input_device_name_from_env() -> Option<String> {
+    env::var(ENV_INPUT_DEVICE)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_u32_env(name: &str) -> Option<u32> {
+    env::var(name).ok()?.trim().parse::<u32>().ok()
+}
+
+fn resolve_session_params_from_env() -> ResolvedSessionParams {
+    let mut requested = SessionParams::mvp_default();
+    if let Ok(codec) = env::var(ENV_CODEC) {
+        let trimmed = codec.trim();
+        if !trimmed.is_empty() {
+            requested.codec = trimmed.to_string();
+        }
+    }
+    if let Some(sample_rate_hz) = parse_u32_env(ENV_SAMPLE_RATE_HZ) {
+        requested.sample_rate_hz = sample_rate_hz;
+    }
+    if let Some(chunk_ms) = parse_u32_env(ENV_CHUNK_MS) {
+        requested.chunk_ms = chunk_ms;
+    }
+    if let Some(opus_bitrate_kbps) = parse_u32_env(ENV_OPUS_BITRATE_KBPS) {
+        requested.opus_bitrate_kbps = Some(opus_bitrate_kbps);
+    }
+    if let Some(jitter_buffer_ms) = parse_u32_env(ENV_JITTER_BUFFER_MS) {
+        requested.jitter_buffer_ms = jitter_buffer_ms;
+    }
+    let normalized = normalize_session_params(&requested);
+    info!(
+        requested = ?requested,
+        effective = ?normalized.effective,
+        "client params resolved from env"
+    );
+    if !normalized.fallbacks.is_empty() {
+        info!(
+            requested = ?requested,
+            effective = ?normalized.effective,
+            fallbacks = ?normalized.fallbacks,
+            "client params normalized from env"
+        );
+    }
+    ResolvedSessionParams {
+        requested,
+        effective: normalized.effective,
+        fallbacks: normalized.fallbacks,
+    }
+}
+
+fn session_params_from_env() -> SessionParams {
+    resolve_session_params_from_env().effective
+}
+
+fn session_report_path_from_env() -> Option<PathBuf> {
+    env::var(ENV_SESSION_REPORT)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn write_session_report(
+    requested: &SessionParams,
+    effective: &SessionParams,
+    fallbacks: &[FallbackEvent],
+    handshake_effective: Option<&SessionParams>,
+) -> Result<(), String> {
+    let Some(path) = session_report_path_from_env() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create session report dir failed: {err}"))?;
+    }
+    let payload = serde_json::json!({
+        "requested": requested,
+        "effective": effective,
+        "fallbacks": fallbacks,
+        "handshake_effective": handshake_effective,
+    });
+    let text = serde_json::to_string_pretty(&payload)
+        .map_err(|err| format!("serialize session report failed: {err}"))?;
+    fs::write(&path, format!("{text}\n"))
+        .map_err(|err| format!("write session report failed: {err}"))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,7 +560,9 @@ impl ClientMetrics {
 mod tests {
     use super::{
         build_audio_datagram, build_handshake_datagram, build_heartbeat_datagram, now_ms,
-        wait_for_handshake_response, DATAGRAM_KIND_AUDIO_PCM16, DATAGRAM_KIND_CONTROL_JSON,
+        session_params_from_env, wait_for_handshake_response, DATAGRAM_KIND_AUDIO_PCM16,
+        DATAGRAM_KIND_CONTROL_JSON, ENV_CHUNK_MS, ENV_JITTER_BUFFER_MS, ENV_OPUS_BITRATE_KBPS,
+        ENV_SAMPLE_RATE_HZ,
     };
     use netmic_client::Pcm16Frame;
     use netmic_proto::control::{
@@ -446,8 +575,21 @@ mod tests {
     use netmic_proto::protocol::{
         AudioFrameHeader, HandshakeRequest, HandshakeResponse, Heartbeat, SessionParams,
     };
+    use std::env;
+    use std::io::ErrorKind;
     use std::net::UdpSocket;
     use std::time::Duration;
+
+    fn bind_udp_or_skip(label: &str) -> Option<UdpSocket> {
+        match UdpSocket::bind("127.0.0.1:0") {
+            Ok(socket) => Some(socket),
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("skip {label}: udp bind not permitted in current sandbox");
+                None
+            }
+            Err(err) => panic!("{label}: {err}"),
+        }
+    }
 
     #[test]
     fn control_datagram_prefixes_kind_and_is_splitable() {
@@ -489,13 +631,17 @@ mod tests {
 
     #[test]
     fn udp_send_emits_control_and_audio_kinds() {
-        let receiver = UdpSocket::bind("127.0.0.1:0").expect("bind receiver");
+        let Some(receiver) = bind_udp_or_skip("bind receiver") else {
+            return;
+        };
         receiver
             .set_read_timeout(Some(Duration::from_millis(500)))
             .expect("set timeout");
         let recv_addr = receiver.local_addr().expect("receiver addr");
 
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind sender");
+        let Some(sender) = bind_udp_or_skip("bind sender") else {
+            return;
+        };
         let params = SessionParams::mvp_default();
         let request = HandshakeRequest {
             session_id: "session-2".to_string(),
@@ -537,12 +683,16 @@ mod tests {
 
     #[test]
     fn wait_for_handshake_response_parses_control_reply() {
-        let receiver = UdpSocket::bind("127.0.0.1:0").expect("bind receiver");
+        let Some(receiver) = bind_udp_or_skip("bind receiver") else {
+            return;
+        };
         receiver
             .set_read_timeout(Some(Duration::from_millis(500)))
             .expect("set timeout");
         let addr = receiver.local_addr().expect("addr");
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind sender");
+        let Some(sender) = bind_udp_or_skip("bind sender") else {
+            return;
+        };
 
         let response = HandshakeResponse {
             session_id: "session-test".to_string(),
@@ -621,5 +771,35 @@ mod tests {
         assert_eq!(decoded.timestamp_ms, header.timestamp_ms);
         assert_eq!(decoded.frame_samples, header.frame_samples);
         assert_eq!(pcm.len(), frame.samples.len() * 2);
+    }
+
+    #[test]
+    fn session_params_from_env_normalizes_invalid_values() {
+        unsafe {
+            env::set_var(ENV_SAMPLE_RATE_HZ, "12345");
+            env::set_var(ENV_CHUNK_MS, "15");
+            env::set_var(ENV_OPUS_BITRATE_KBPS, "999");
+            env::set_var(ENV_JITTER_BUFFER_MS, "999");
+        }
+        let params = session_params_from_env();
+        assert_eq!(
+            params.sample_rate_hz,
+            SessionParams::mvp_default().sample_rate_hz
+        );
+        assert_eq!(params.chunk_ms, SessionParams::mvp_default().chunk_ms);
+        assert_eq!(
+            params.opus_bitrate_kbps,
+            SessionParams::mvp_default().opus_bitrate_kbps
+        );
+        assert_eq!(
+            params.jitter_buffer_ms,
+            SessionParams::mvp_default().jitter_buffer_ms
+        );
+        unsafe {
+            env::remove_var(ENV_SAMPLE_RATE_HZ);
+            env::remove_var(ENV_CHUNK_MS);
+            env::remove_var(ENV_OPUS_BITRATE_KBPS);
+            env::remove_var(ENV_JITTER_BUFFER_MS);
+        }
     }
 }

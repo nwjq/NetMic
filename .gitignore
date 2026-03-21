@@ -17,6 +17,7 @@
 # NetMic Harness 本地配置与产物
 .harness/hosts.env
 .harness/runs/
+.harness/coordinator_state.json
 
 # Agent Hub 本地数据库
 agent_hub.db

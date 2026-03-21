@@ -32,6 +32,7 @@
 - `NETMIC_HARNESS_LINUX_PASSWORD`
   - 默认值：未设置
   - 用途：Linux 连接密码；可选。
+  - 说明：若使用该字段而不是 `NETMIC_HARNESS_LINUX_SSH_KEY`，Coordinator 本机需提供 `sshpass`。
 - `NETMIC_HARNESS_LINUX_SSH_KEY`
   - 默认值：未设置
   - 用途：Linux SSH 私钥路径；可选。
@@ -68,6 +69,24 @@
 - `NETMIC_CLIENT_HEARTBEAT_MS`
   - 默认值：`1000`
   - 用途：客户端心跳间隔（毫秒）；设置为 `0` 可禁用心跳。
+- `NETMIC_CLIENT_INPUT_DEVICE`
+  - 默认值：未设置
+  - 用途：CLI/Harness 模式下指定输入设备名；为空时回退到系统默认输入设备。
+- `NETMIC_CLIENT_CODEC`
+  - 默认值：`opus`
+  - 用途：CLI/Harness 模式下覆盖客户端请求 codec；实际生效值仍会被安全范围归一化。
+- `NETMIC_CLIENT_SAMPLE_RATE_HZ`
+  - 默认值：`48000`
+  - 用途：CLI/Harness 模式下覆盖客户端请求采样率；超出安全范围会回退。
+- `NETMIC_CLIENT_CHUNK_MS`
+  - 默认值：`20`
+  - 用途：CLI/Harness 模式下覆盖客户端请求 chunk；超出安全范围会回退。
+- `NETMIC_CLIENT_OPUS_BITRATE_KBPS`
+  - 默认值：`48`
+  - 用途：CLI/Harness 模式下覆盖客户端请求 Opus bitrate；超出安全范围会回退。
+- `NETMIC_CLIENT_JITTER_BUFFER_MS`
+  - 默认值：`100`
+  - 用途：CLI/Harness 模式下覆盖客户端请求 jitter buffer；超出安全范围会回退。
 
 ## Server（netmic-server）
 
@@ -83,9 +102,28 @@
 - `NETMIC_UI_SERVER_AUTO_STOP`
   - 默认值：`true`（开启）
   - 用途：UI 在 Server 模式点击“停止监听”时，若服务端由 UI 启动则自动结束该进程；设置为 `0/false/off/no` 可保留服务端继续运行。
+- `NETMIC_UI_HARNESS_AUTOSTART`
+  - 默认值：未设置（关闭）
+  - 用途：真实 `netmic-ui` 在 Harness 模式下自动切到 Client、写入目标配置并开始推流。
+- `NETMIC_UI_HARNESS_SERVER_ADDR`
+  - 默认值：`127.0.0.1`
+  - 用途：Harness 自动拉起 `netmic-ui` 时写入的服务端地址。
+- `NETMIC_UI_HARNESS_SERVER_PORT`
+  - 默认值：`43000`
+  - 用途：Harness 自动拉起 `netmic-ui` 时写入的服务端端口。
+- `NETMIC_UI_HARNESS_INPUT_DEVICE`
+  - 默认值：`系统默认`
+  - 用途：Harness 自动拉起 `netmic-ui` 时指定输入设备。
+- `NETMIC_UI_HARNESS_SNAPSHOT_PATH`
+  - 默认值：未设置
+  - 用途：真实 `netmic-ui` 在 Harness 模式下持续写入当前 `UiSnapshot` 的 JSON 文件。
+- `NETMIC_UI_HARNESS_EVENT_LOG`
+  - 默认值：未设置
+  - 用途：真实 `netmic-ui` 在 Harness 模式下追加写入 snapshot 事件日志（ndjson），供 M3 恢复判定使用。
 - `NETMIC_SERVER_AUDIO_DUMP`
   - 默认值：未设置（关闭）
   - 用途：设置为文件路径时，将收到的 PCM16 payload 追加写入文件，供排障使用。
+  - 说明：当前实现会在保持主 sink 注入的同时额外写 dump，供 Harness 回收产物。
 - `NETMIC_SERVER_AUDIO_SINK`
   - 默认值：`pulse`
   - 用途：选择服务端音频输出 sink（`pulse`/`null`）。`pulse` 会把 PCM 写入虚拟 sink；`null` 用于仅跑网络链路。

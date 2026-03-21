@@ -5,9 +5,8 @@ use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
-    CONTROL_TYPE_STATS,
     CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
-    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
+    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE, CONTROL_TYPE_STATS,
 };
 use netmic_proto::datagram::{
     split_datagram, wrap_audio_pcm16_with_header, wrap_control_json, DatagramKind,
@@ -33,8 +32,16 @@ const SERVER_STATUS_POLL_MS: u64 = 1_000;
 const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
 const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
 const ENV_CLIENT_HEARTBEAT_MS: &str = "NETMIC_CLIENT_HEARTBEAT_MS";
+const ENV_HARNESS_AUTOSTART: &str = "NETMIC_UI_HARNESS_AUTOSTART";
+const ENV_HARNESS_SERVER_ADDR: &str = "NETMIC_UI_HARNESS_SERVER_ADDR";
+const ENV_HARNESS_SERVER_PORT: &str = "NETMIC_UI_HARNESS_SERVER_PORT";
+const ENV_HARNESS_INPUT_DEVICE: &str = "NETMIC_UI_HARNESS_INPUT_DEVICE";
+const ENV_HARNESS_SNAPSHOT_PATH: &str = "NETMIC_UI_HARNESS_SNAPSHOT_PATH";
+const ENV_HARNESS_EVENT_LOG: &str = "NETMIC_UI_HARNESS_EVENT_LOG";
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 const CLIENT_SERVER_TIMEOUT_MULTIPLIER: u64 = 3;
+const CLIENT_RECONNECT_BASE_DELAY_MS: u64 = 1_000;
+const CLIENT_RECONNECT_MAX_DELAY_MS: u64 = 4_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiClientConfig {
@@ -299,6 +306,7 @@ struct AppState {
     streaming: bool,
     metrics_loop: bool,
     capture_loop: bool,
+    client_handshake_loop: bool,
     server_monitor_loop: bool,
     server_process: Option<Child>,
     connected_since: Option<Instant>,
@@ -410,6 +418,7 @@ impl AppState {
             streaming: false,
             metrics_loop: false,
             capture_loop: false,
+            client_handshake_loop: false,
             server_monitor_loop: false,
             server_process: None,
             connected_since: None,
@@ -547,12 +556,102 @@ fn read_persisted_state(path: &PathBuf) -> Option<PersistedState> {
 
 fn write_persisted_state(path: &PathBuf, state: &PersistedState) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("创建配置目录失败：{err}"))?;
+        fs::create_dir_all(parent).map_err(|err| format!("创建配置目录失败：{err}"))?;
     }
     let payload =
         serde_json::to_vec_pretty(state).map_err(|err| format!("配置序列化失败：{err}"))?;
     fs::write(path, payload).map_err(|err| format!("配置写入失败：{err}"))
+}
+
+fn env_trimmed(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn truthy_env(name: &str) -> bool {
+    matches!(
+        env_trimmed(name).as_deref(),
+        Some("1" | "true" | "on" | "yes")
+    )
+}
+
+fn maybe_write_harness_snapshot(snapshot: &UiSnapshot) {
+    if let Some(path) = env_trimmed(ENV_HARNESS_SNAPSHOT_PATH) {
+        if let Ok(payload) = serde_json::to_vec_pretty(snapshot) {
+            let path = PathBuf::from(path);
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(path, payload);
+        }
+    }
+
+    if let Some(path) = env_trimmed(ENV_HARNESS_EVENT_LOG) {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let payload = serde_json::json!({
+            "ts_ms": now_ms(),
+            "snapshot": snapshot,
+        });
+        if let Ok(line) = serde_json::to_string(&payload) {
+            use std::io::Write;
+
+            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(file, "{line}");
+            }
+        }
+    }
+}
+
+fn harness_server_port() -> u16 {
+    env_trimmed(ENV_HARNESS_SERVER_PORT)
+        .and_then(|raw| raw.parse::<u16>().ok())
+        .unwrap_or(43000)
+}
+
+fn harness_client_config() -> UiClientConfig {
+    let default = SessionParams::mvp_default();
+    UiClientConfig {
+        server_addr: env_trimmed(ENV_HARNESS_SERVER_ADDR)
+            .unwrap_or_else(|| "127.0.0.1".to_string()),
+        server_port: harness_server_port(),
+        input_device: env_trimmed(ENV_HARNESS_INPUT_DEVICE)
+            .unwrap_or_else(|| "系统默认".to_string()),
+        codec: default.codec,
+        sample_rate_hz: default.sample_rate_hz,
+        channels: default.channels,
+        chunk_ms: default.chunk_ms,
+        opus_bitrate_kbps: default.opus_bitrate_kbps.unwrap_or(48),
+        jitter_buffer_ms: default.jitter_buffer_ms,
+        auto_reconnect: true,
+        pairing_token: "".to_string(),
+    }
+}
+
+fn maybe_start_harness_autostart(app: &AppHandle) {
+    if !truthy_env(ENV_HARNESS_AUTOSTART) {
+        return;
+    }
+
+    let state = app.state::<SharedState>().inner().clone();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mode_snapshot = apply_set_mode(&state, "client");
+        emit_snapshot(&app, &mode_snapshot);
+
+        let config_snapshot = apply_set_client_config(&state, harness_client_config());
+        emit_snapshot(&app, &config_snapshot);
+
+        let start_snapshot = apply_start(&state);
+        emit_snapshot(&app, &start_snapshot);
+        ensure_metrics_loop(state.clone(), app.clone());
+        ensure_capture_loop(state.clone(), app.clone());
+        ensure_client_handshake_loop(state.clone(), app.clone());
+    });
 }
 
 #[tauri::command]
@@ -598,18 +697,18 @@ fn reset_defaults(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     snapshot
 }
 
-#[tauri::command]
-fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
+fn start_runtime(state: SharedState, app: AppHandle) -> UiSnapshot {
     let mode = { state.lock().expect("state lock").snapshot.mode.clone() };
-    let snapshot = apply_start(state.inner());
+    let snapshot = apply_start(&state);
 
     emit_snapshot(&app, &snapshot);
     if mode == "client" {
-        ensure_metrics_loop(state.inner().clone(), app.clone());
+        ensure_metrics_loop(state.clone(), app.clone());
         // 先启动本地采集，确保 macOS 触发权限提示并预览波形。
-        ensure_capture_loop(state.inner().clone(), app.clone());
+        ensure_capture_loop(state.clone(), app.clone());
+        ensure_client_handshake_loop(state.clone(), app.clone());
     } else {
-        if let Err(err) = ensure_server_running(state.inner()) {
+        if let Err(err) = ensure_server_running(&state) {
             let snapshot = {
                 let mut guard = state.lock().expect("state lock");
                 guard.snapshot.status = "error".to_string();
@@ -621,8 +720,8 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
             emit_snapshot(&app, &snapshot);
             return snapshot;
         }
-        ensure_server_monitor_loop(state.inner().clone(), app.clone());
-        if let Some(snapshot) = refresh_server_status(state.inner()) {
+        ensure_server_monitor_loop(state.clone(), app.clone());
+        if let Some(snapshot) = refresh_server_status(&state) {
             emit_snapshot(&app, &snapshot);
         }
         let should_create = {
@@ -631,70 +730,16 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
         };
         if should_create {
             let snapshot = apply_server_command(
-                state.inner(),
+                &state,
                 "virtual_mic_create",
                 "已请求创建虚拟麦克风",
                 "虚拟麦克风创建失败",
             );
             emit_snapshot(&app, &snapshot);
-            if let Some(snapshot) = refresh_server_status(state.inner()) {
+            if let Some(snapshot) = refresh_server_status(&state) {
                 emit_snapshot(&app, &snapshot);
             }
         }
-    }
-
-    if mode == "client" {
-        let state = state.inner().clone();
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let (server_addr, request) = {
-                let guard = state.lock().expect("state lock");
-                let server_addr = format!(
-                    "{}:{}",
-                    guard.snapshot.client_config.server_addr, guard.snapshot.client_config.server_port
-                );
-                let request = build_handshake_request(&guard.snapshot.client_config);
-                (server_addr, request)
-            };
-
-            let mut sender = match ClientSender::new(server_addr.clone()) {
-                Ok(sender) => sender,
-                Err(err) => {
-                    let snapshot = {
-                        let mut guard = state.lock().expect("state lock");
-                        guard.snapshot.status = "error".to_string();
-                        guard.snapshot.status_note = "网络发送失败".to_string();
-                        guard.streaming = false;
-                        guard.connected_since = None;
-                        guard.snapshot.runtime.last_error = Some(format!("发送初始化失败：{err}"));
-                        guard.push_log("error", format!("发送初始化失败：{err}"));
-                        guard.capture_loop = false;
-                        guard.pending_sender = None;
-                        guard.last_server_seen_ms = None;
-                        guard.snapshot.clone()
-                    };
-                    emit_snapshot(&app, &snapshot);
-                    return;
-                }
-            };
-
-            let response = sender.perform_handshake(&request, Duration::from_millis(1200));
-            let (snapshot, accepted) = {
-                let mut guard = state.lock().expect("state lock");
-                if !guard.streaming || guard.snapshot.mode != "client" {
-                    return;
-                }
-                let accepted = apply_handshake_outcome(&mut guard, &server_addr, response);
-                if accepted {
-                    guard.pending_sender = Some(sender);
-                }
-                (guard.snapshot.clone(), accepted)
-            };
-            if accepted {
-                ensure_capture_loop(state.clone(), app.clone());
-            }
-            emit_snapshot(&app, &snapshot);
-        });
     }
 
     let snapshot = {
@@ -703,6 +748,11 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     };
     emit_snapshot(&app, &snapshot);
     snapshot
+}
+
+#[tauri::command]
+fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
+    start_runtime(state.inner().clone(), app)
 }
 
 #[tauri::command]
@@ -724,10 +774,7 @@ fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     if mode == "server" {
         let server_addr = {
             let guard = state.lock().expect("state lock");
-            format!(
-                "127.0.0.1:{}",
-                guard.snapshot.server_config.listen_port
-            )
+            format!("127.0.0.1:{}", guard.snapshot.server_config.listen_port)
         };
         let result = send_server_command(&server_addr, "force_disconnect");
 
@@ -753,10 +800,7 @@ fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
                 }
                 Err(err) => {
                     guard.snapshot.runtime.last_error = Some(format!("服务端未响应：{err}"));
-                    guard.push_log(
-                        "error",
-                        format!("服务端未响应（{server_addr}）：{err}"),
-                    );
+                    guard.push_log("error", format!("服务端未响应（{server_addr}）：{err}"));
                     guard.snapshot.clone()
                 }
             }
@@ -830,6 +874,199 @@ fn clear_logs(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     snapshot
 }
 
+fn reconnect_backoff(attempt: u32) -> Duration {
+    let factor = 1_u64.checked_shl(attempt.saturating_sub(1)).unwrap_or(8);
+    let delay_ms = CLIENT_RECONNECT_BASE_DELAY_MS.saturating_mul(factor);
+    Duration::from_millis(delay_ms.min(CLIENT_RECONNECT_MAX_DELAY_MS))
+}
+
+fn apply_client_runtime_failure(
+    state: &SharedState,
+    summary: String,
+    reconnect_note: &str,
+) -> (UiSnapshot, bool) {
+    let mut guard = state.lock().expect("state lock");
+    guard.pending_sender = None;
+    guard.last_server_seen_ms = None;
+    guard.connected_since = None;
+    guard.snapshot.runtime.peer_addr = None;
+    guard.snapshot.runtime.connected_seconds = 0;
+    guard.reset_metrics();
+
+    let should_reconnect = guard.streaming
+        && guard.snapshot.mode == "client"
+        && guard.snapshot.client_config.auto_reconnect;
+    if should_reconnect {
+        guard.snapshot.status = "connecting".to_string();
+        guard.snapshot.status_note = reconnect_note.to_string();
+        guard.snapshot.runtime.last_error = Some(summary.clone());
+        guard.push_log("warn", summary);
+    } else {
+        guard.streaming = false;
+        guard.capture_loop = false;
+        guard.client_handshake_loop = false;
+        guard.snapshot.status = "error".to_string();
+        guard.snapshot.status_note = reconnect_note.to_string();
+        guard.snapshot.runtime.last_error = Some(summary.clone());
+        guard.push_log("error", summary);
+    }
+    (guard.snapshot.clone(), should_reconnect)
+}
+
+fn ensure_client_handshake_loop(state: SharedState, app: AppHandle) {
+    let should_spawn = {
+        let mut guard = state.lock().expect("state lock");
+        if guard.client_handshake_loop {
+            false
+        } else {
+            guard.client_handshake_loop = true;
+            true
+        }
+    };
+
+    if !should_spawn {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let mut attempt: u32 = 0;
+        loop {
+            let (streaming, mode, config) = {
+                let guard = state.lock().expect("state lock");
+                (
+                    guard.streaming,
+                    guard.snapshot.mode.clone(),
+                    guard.snapshot.client_config.clone(),
+                )
+            };
+            if !streaming || mode != "client" {
+                let mut guard = state.lock().expect("state lock");
+                guard.client_handshake_loop = false;
+                return;
+            }
+
+            let server_addr = format!("{}:{}", config.server_addr, config.server_port);
+            let request = build_handshake_request(&config);
+            let mut sender = match ClientSender::new(server_addr.clone()) {
+                Ok(sender) => sender,
+                Err(err) => {
+                    let (snapshot, should_reconnect) = apply_client_runtime_failure(
+                        &state,
+                        format!("发送初始化失败：{err}"),
+                        "等待服务端重连",
+                    );
+                    emit_snapshot(&app, &snapshot);
+                    if !should_reconnect {
+                        return;
+                    }
+                    attempt = attempt.saturating_add(1);
+                    {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.snapshot.runtime.reconnect_attempts = attempt;
+                    }
+                    std::thread::sleep(reconnect_backoff(attempt));
+                    continue;
+                }
+            };
+
+            let response = sender.perform_handshake(&request, Duration::from_millis(1200));
+            match response {
+                Ok(response) if response.accepted && !response.busy => {
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        if !guard.streaming || guard.snapshot.mode != "client" {
+                            guard.client_handshake_loop = false;
+                            return;
+                        }
+                        let accepted =
+                            apply_handshake_outcome(&mut guard, &server_addr, Ok(response));
+                        if accepted {
+                            guard.pending_sender = Some(sender);
+                            guard.snapshot.runtime.reconnect_attempts = 0;
+                        }
+                        guard.client_handshake_loop = false;
+                        guard.snapshot.clone()
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    ensure_capture_loop(state.clone(), app.clone());
+                    return;
+                }
+                Ok(response) => {
+                    let reason = if response.busy {
+                        "握手失败：服务端忙".to_string()
+                    } else {
+                        let detail = response
+                            .reason
+                            .clone()
+                            .filter(|item| !item.trim().is_empty())
+                            .unwrap_or_else(|| "被拒绝".to_string());
+                        format!("握手失败：{detail}")
+                    };
+                    let should_reconnect = config.auto_reconnect;
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.pending_sender = None;
+                        guard.last_server_seen_ms = None;
+                        guard.connected_since = None;
+                        guard.snapshot.runtime.peer_addr = None;
+                        guard.snapshot.runtime.connected_seconds = 0;
+                        guard.reset_metrics();
+                        if should_reconnect && guard.streaming && guard.snapshot.mode == "client" {
+                            attempt = attempt.saturating_add(1);
+                            guard.snapshot.runtime.reconnect_attempts = attempt;
+                            guard.snapshot.status = "connecting".to_string();
+                            guard.snapshot.status_note = "等待服务端重连".to_string();
+                            guard.snapshot.runtime.last_error = Some(reason.clone());
+                            guard.push_log("warn", format!("重连第 {attempt} 次失败：{reason}"));
+                            guard.snapshot.clone()
+                        } else {
+                            guard.client_handshake_loop = false;
+                            let _ = apply_handshake_outcome(&mut guard, &server_addr, Ok(response));
+                            guard.snapshot.clone()
+                        }
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    if !should_reconnect {
+                        return;
+                    }
+                }
+                Err(err) => {
+                    let detail = format!("握手失败：{err}");
+                    let should_reconnect = config.auto_reconnect;
+                    let snapshot = {
+                        let mut guard = state.lock().expect("state lock");
+                        guard.pending_sender = None;
+                        guard.last_server_seen_ms = None;
+                        guard.connected_since = None;
+                        guard.snapshot.runtime.peer_addr = None;
+                        guard.snapshot.runtime.connected_seconds = 0;
+                        guard.reset_metrics();
+                        if should_reconnect && guard.streaming && guard.snapshot.mode == "client" {
+                            attempt = attempt.saturating_add(1);
+                            guard.snapshot.runtime.reconnect_attempts = attempt;
+                            guard.snapshot.status = "connecting".to_string();
+                            guard.snapshot.status_note = "等待服务端重连".to_string();
+                            guard.snapshot.runtime.last_error = Some(detail.clone());
+                            guard.push_log("warn", format!("重连第 {attempt} 次失败：{detail}"));
+                            guard.snapshot.clone()
+                        } else {
+                            guard.client_handshake_loop = false;
+                            let _ = apply_handshake_outcome(&mut guard, &server_addr, Err(err));
+                            guard.snapshot.clone()
+                        }
+                    };
+                    emit_snapshot(&app, &snapshot);
+                    if !should_reconnect {
+                        return;
+                    }
+                }
+            }
+
+            std::thread::sleep(reconnect_backoff(attempt.max(1)));
+        }
+    });
+}
+
 fn ensure_metrics_loop(state: SharedState, app: AppHandle) {
     let should_spawn = {
         let mut guard = state.lock().expect("state lock");
@@ -878,10 +1115,7 @@ fn ensure_server_monitor_loop(state: SharedState, app: AppHandle) {
     std::thread::spawn(move || loop {
         let (streaming, mode) = {
             let guard = state.lock().expect("state lock");
-            (
-                guard.streaming,
-                guard.snapshot.mode.clone(),
-            )
+            (guard.streaming, guard.snapshot.mode.clone())
         };
 
         if !streaming || mode != "server" {
@@ -1032,50 +1266,46 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                 last_emit = Instant::now();
             }
 
-            if let Some(sender) = sender.as_mut() {
-                if let Err(err) = sender.send_frame(&frame) {
-                    let snapshot = {
-                        let mut guard = state.lock().expect("state lock");
-                        guard.snapshot.status = "error".to_string();
-                        guard.snapshot.status_note = "网络发送失败".to_string();
-                        guard.streaming = false;
-                        guard.connected_since = None;
-                        guard.snapshot.runtime.last_error = Some(format!("发送失败：{err}"));
-                        guard.push_log("error", format!("发送失败：{err}"));
-                        guard.capture_loop = false;
-                        guard.pending_sender = None;
-                        guard.snapshot.clone()
-                    };
+            if let Some(active_sender) = sender.as_mut() {
+                if let Err(err) = active_sender.send_frame(&frame) {
+                    sender = None;
+                    let (snapshot, should_reconnect) = apply_client_runtime_failure(
+                        &state,
+                        format!("发送失败：{err}"),
+                        "等待服务端重连",
+                    );
                     emit_snapshot(&app, &snapshot);
+                    if should_reconnect {
+                        ensure_client_handshake_loop(state.clone(), app.clone());
+                        continue;
+                    }
                     return;
                 }
 
-                let stats = match sender.poll_stats() {
+                let stats = match active_sender.poll_stats() {
                     Ok(stats) => stats,
                     Err(err) => {
-                        let snapshot = {
-                            let mut guard = state.lock().expect("state lock");
-                            guard.snapshot.status = "error".to_string();
-                            guard.snapshot.status_note = "服务端响应失败".to_string();
-                            guard.streaming = false;
-                            guard.connected_since = None;
-                            guard.snapshot.runtime.last_error = Some(format!("服务端响应失败：{err}"));
-                            guard.push_log("error", format!("服务端响应失败：{err}"));
-                            guard.capture_loop = false;
-                            guard.pending_sender = None;
-                            guard.last_server_seen_ms = None;
-                            guard.snapshot.clone()
-                        };
+                        sender = None;
+                        let (snapshot, should_reconnect) = apply_client_runtime_failure(
+                            &state,
+                            format!("服务端响应失败：{err}"),
+                            "等待服务端重连",
+                        );
                         emit_snapshot(&app, &snapshot);
+                        if should_reconnect {
+                            ensure_client_handshake_loop(state.clone(), app.clone());
+                            continue;
+                        }
                         return;
                     }
                 };
 
                 let now = now_ms();
-                let timeout_ms = sender.timeout_ms();
-                let (snapshot, should_emit) = {
+                let timeout_ms = active_sender.timeout_ms();
+                let (snapshot, should_emit, timed_out) = {
                     let mut guard = state.lock().expect("state lock");
                     let mut should_emit = false;
+                    let mut timed_out = false;
                     if let Some(stats) = stats {
                         apply_stats_to_metrics(&stats, &mut guard.snapshot.metrics);
                         guard.last_server_seen_ms = Some(now);
@@ -1090,22 +1320,33 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                         (timeout_ms, guard.last_server_seen_ms)
                     {
                         if now.saturating_sub(last_seen) > timeout_ms {
-                            guard.snapshot.status = "error".to_string();
-                            guard.snapshot.status_note = "服务端无响应".to_string();
-                            guard.streaming = false;
-                            guard.connected_since = None;
-                            guard.snapshot.runtime.last_error = Some("服务端无响应".to_string());
-                            guard.push_log("error", "服务端无响应，已停止推流");
-                            guard.capture_loop = false;
-                            guard.pending_sender = None;
-                            guard.last_server_seen_ms = None;
                             should_emit = true;
+                            timed_out = true;
                         }
                     }
 
-                    (guard.snapshot.clone(), should_emit)
+                    (guard.snapshot.clone(), should_emit, timed_out)
                 };
+                if timed_out {
+                    sender = None;
+                }
                 if should_emit {
+                    let needs_reconnect = timed_out
+                        || (snapshot.status != "streaming"
+                            && snapshot.runtime.last_error.is_none());
+                    if needs_reconnect {
+                        let (snapshot, should_reconnect) = apply_client_runtime_failure(
+                            &state,
+                            "服务端无响应".to_string(),
+                            "等待服务端重连",
+                        );
+                        emit_snapshot(&app, &snapshot);
+                        if should_reconnect {
+                            ensure_client_handshake_loop(state.clone(), app.clone());
+                            continue;
+                        }
+                        return;
+                    }
                     emit_snapshot(&app, &snapshot);
                 }
             }
@@ -1298,7 +1539,11 @@ fn refresh_server_status(state: &SharedState) -> Option<UiSnapshot> {
                     status.virtual_mic_name,
                     error_note
                 );
-                let level = if status.virtual_mic_ready { "info" } else { "warn" };
+                let level = if status.virtual_mic_ready {
+                    "info"
+                } else {
+                    "warn"
+                };
                 guard.push_log(level, message.clone());
                 eprintln!("[netmic-ui] {message}");
             }
@@ -1377,7 +1622,10 @@ fn ensure_single_server_instance(state: &SharedState) {
 
     #[cfg(target_family = "unix")]
     {
-        let status = Command::new("pkill").arg("-f").arg("netmic-server").status();
+        let status = Command::new("pkill")
+            .arg("-f")
+            .arg("netmic-server")
+            .status();
         let mut guard = state.lock().expect("state lock");
         match status {
             Ok(status) if status.success() => {
@@ -1474,6 +1722,7 @@ fn apply_handshake_outcome(
             state.snapshot.status = "streaming".to_string();
             state.snapshot.status_note = "推流中（握手成功）".to_string();
             state.snapshot.runtime.peer_addr = Some(server_addr.to_string());
+            state.snapshot.runtime.reconnect_attempts = 0;
             state.snapshot.runtime.last_error = None;
             state.pending_sender = None;
             state.last_server_seen_ms = None;
@@ -1548,6 +1797,7 @@ fn apply_set_mode(state: &SharedState, mode: &str) -> UiSnapshot {
     guard.snapshot.runtime.virtual_mic_error = None;
     guard.streaming = false;
     guard.connected_since = None;
+    guard.client_handshake_loop = false;
     guard.latest_audio_rms = 0.0;
     guard.latest_audio_peak = 0;
     guard.reset_metrics();
@@ -1598,6 +1848,7 @@ fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
     guard.streaming = false;
     guard.metrics_loop = false;
     guard.capture_loop = false;
+    guard.client_handshake_loop = false;
     guard.server_monitor_loop = false;
     guard.pending_sender = None;
     guard.last_server_seen_ms = None;
@@ -1620,6 +1871,7 @@ fn apply_start(state: &SharedState) -> UiSnapshot {
     guard.last_server_seen_ms = None;
     guard.connected_since = None;
     guard.snapshot.runtime.connected_seconds = 0;
+    guard.snapshot.runtime.reconnect_attempts = 0;
     guard.snapshot.runtime.last_error = None;
     if mode == "client" {
         guard.snapshot.status = "connecting".to_string();
@@ -1637,6 +1889,7 @@ fn apply_stop(state: &SharedState) -> UiSnapshot {
     guard.streaming = false;
     guard.pending_sender = None;
     guard.last_server_seen_ms = None;
+    guard.client_handshake_loop = false;
     guard.snapshot.status = "idle".to_string();
     guard.snapshot.status_note = "已停止".to_string();
     guard.snapshot.runtime.peer_addr = None;
@@ -1696,18 +1949,13 @@ fn apply_server_command(
             guard.push_log("info", ok_message);
         }
         Ok(resp) => {
-            let message = resp
-                .message
-                .unwrap_or_else(|| format!("{fail_prefix}"));
+            let message = resp.message.unwrap_or_else(|| format!("{fail_prefix}"));
             guard.snapshot.runtime.last_error = Some(message.clone());
             guard.push_log("error", message);
         }
         Err(err) => {
             guard.snapshot.runtime.last_error = Some(format!("服务端未响应：{err}"));
-            guard.push_log(
-                "error",
-                format!("服务端未响应（{server_addr}）：{err}"),
-            );
+            guard.push_log("error", format!("服务端未响应（{server_addr}）：{err}"));
         }
     }
     guard.snapshot.clone()
@@ -1715,6 +1963,7 @@ fn apply_server_command(
 
 fn emit_snapshot(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = app.emit(EVENT_SNAPSHOT, snapshot.clone());
+    maybe_write_harness_snapshot(snapshot);
 }
 
 fn emit_waveform(app: &AppHandle, waveform: &UiWaveform) {
@@ -1785,6 +2034,7 @@ fn main() {
         .setup(|app| {
             let state = AppState::load_or_default(app.handle());
             app.manage(Arc::new(Mutex::new(state)));
+            maybe_start_harness_autostart(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

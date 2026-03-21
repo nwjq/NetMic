@@ -19,9 +19,8 @@ use netmic_proto::config::normalize_session_params;
 use netmic_proto::control::{
     decode_control_message, decode_control_payload, encode_control_message,
     CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE, CONTROL_TYPE_HEARTBEAT,
-    CONTROL_TYPE_STATS,
     CONTROL_TYPE_SERVER_COMMAND_REQUEST, CONTROL_TYPE_SERVER_COMMAND_RESPONSE,
-    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE,
+    CONTROL_TYPE_SERVER_STATUS_REQUEST, CONTROL_TYPE_SERVER_STATUS_RESPONSE, CONTROL_TYPE_STATS,
 };
 use netmic_proto::datagram::{
     split_audio_pcm16_with_header, split_datagram, wrap_control_json, DatagramKind,
@@ -583,14 +582,14 @@ impl ReceiverContext {
                 return None;
             }
             let response = self.build_status_response(request.request_id, now);
-            let payload = match encode_control_message(CONTROL_TYPE_SERVER_STATUS_RESPONSE, &response)
-            {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    warn!(%addr, %err, "failed to encode server status response");
-                    return None;
-                }
-            };
+            let payload =
+                match encode_control_message(CONTROL_TYPE_SERVER_STATUS_RESPONSE, &response) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        warn!(%addr, %err, "failed to encode server status response");
+                        return None;
+                    }
+                };
             return Some(wrap_control_json(&payload));
         }
 
@@ -607,14 +606,14 @@ impl ReceiverContext {
                 return None;
             }
             let response = self.handle_server_command(request, now);
-            let payload = match encode_control_message(CONTROL_TYPE_SERVER_COMMAND_RESPONSE, &response)
-            {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    warn!(%addr, %err, "failed to encode server command response");
-                    return None;
-                }
-            };
+            let payload =
+                match encode_control_message(CONTROL_TYPE_SERVER_COMMAND_RESPONSE, &response) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        warn!(%addr, %err, "failed to encode server command response");
+                        return None;
+                    }
+                };
             return Some(wrap_control_json(&payload));
         }
 
@@ -682,9 +681,7 @@ impl ReceiverContext {
             .active_since
             .map(|since| now.saturating_duration_since(since).as_secs())
             .unwrap_or(0);
-        let uptime_ms = now
-            .saturating_duration_since(self.started_at)
-            .as_millis() as u64;
+        let uptime_ms = now.saturating_duration_since(self.started_at).as_millis() as u64;
         let (virtual_mic_name, virtual_mic_ready, virtual_mic_error) = virtual_mic_status();
         let stats = self.metrics.build_stats_snapshot();
         ServerStatusResponse {
@@ -812,6 +809,33 @@ impl AudioSink for FileDumpSink {
     }
 }
 
+struct TeeSink {
+    primary: Box<dyn AudioSink>,
+    secondary: Box<dyn AudioSink>,
+}
+
+impl TeeSink {
+    fn new(primary: Box<dyn AudioSink>, secondary: Box<dyn AudioSink>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl AudioSink for TeeSink {
+    fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize> {
+        let primary_written = self.primary.write_pcm16(payload)?;
+        let secondary_written = self.secondary.write_pcm16(payload)?;
+        if primary_written != payload.len() || secondary_written != payload.len() {
+            return Err(anyhow::anyhow!(
+                "tee sink short write: primary={}, secondary={}, expected={}",
+                primary_written,
+                secondary_written,
+                payload.len()
+            ));
+        }
+        Ok(payload.len())
+    }
+}
+
 fn audio_sink_from_env(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
     let Ok(raw) = env::var("NETMIC_SERVER_AUDIO_DUMP") else {
         return build_sink_from_mode(params);
@@ -821,9 +845,10 @@ fn audio_sink_from_env(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
         return build_sink_from_mode(params);
     }
     let path = PathBuf::from(trimmed);
-    let sink = FileDumpSink::new(path)?;
-    info!(path = %sink.path.display(), "NETMIC_SERVER_AUDIO_DUMP enabled");
-    Ok(Box::new(sink))
+    let dump_sink = FileDumpSink::new(path)?;
+    info!(path = %dump_sink.path.display(), "NETMIC_SERVER_AUDIO_DUMP enabled");
+    let primary_sink = build_sink_from_mode(params)?;
+    Ok(Box::new(TeeSink::new(primary_sink, Box::new(dump_sink))))
 }
 
 fn should_auto_create_virtual_mic() -> bool {
@@ -869,8 +894,7 @@ fn run_test_tone(params: &SessionParams, mut sink: Box<dyn AudioSink>) -> Result
     let duration = test_tone_duration_from_env();
     let freq_hz = test_tone_freq_from_env().max(1.0);
     let gain = test_tone_gain_from_env().clamp(0.0, 0.9);
-    let frame_samples = ((params.sample_rate_hz as u64)
-        .saturating_mul(params.chunk_ms as u64)
+    let frame_samples = ((params.sample_rate_hz as u64).saturating_mul(params.chunk_ms as u64)
         / 1000)
         .max(1) as usize;
     let mut phase = 0.0_f32;
@@ -884,7 +908,13 @@ fn run_test_tone(params: &SessionParams, mut sink: Box<dyn AudioSink>) -> Result
                 break;
             }
         }
-        let frame = build_sine_frame(freq_hz, gain, params.sample_rate_hz, frame_samples, &mut phase);
+        let frame = build_sine_frame(
+            freq_hz,
+            gain,
+            params.sample_rate_hz,
+            frame_samples,
+            &mut phase,
+        );
         let payload = pcm16_to_bytes(&frame);
         sink.write_pcm16(&payload)?;
         std::thread::sleep(interval);
@@ -928,7 +958,7 @@ fn read_bool_env(name: &str) -> bool {
     }
 }
 
-fn build_sink_from_mode(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
+fn build_sink_from_mode(_params: &SessionParams) -> Result<Box<dyn AudioSink>> {
     let mode = env::var(ENV_AUDIO_SINK).unwrap_or_else(|_| "pulse".to_string());
     match mode.as_str() {
         "null" => Ok(Box::new(NullSink)),
@@ -938,13 +968,13 @@ fn build_sink_from_mode(params: &SessionParams) -> Result<Box<dyn AudioSink>> {
                 let config = virtual_mic_config_from_env();
                 let sink = PulseAudioSink::new(
                     config.sink_name.as_str(),
-                    params.sample_rate_hz,
-                    params.channels,
+                    _params.sample_rate_hz,
+                    _params.channels,
                 )?;
                 info!(
                     sink = %config.sink_name,
-                    sample_rate_hz = params.sample_rate_hz,
-                    channels = params.channels,
+                    sample_rate_hz = _params.sample_rate_hz,
+                    channels = _params.channels,
                     "pulse audio sink ready"
                 );
                 return Ok(Box::new(sink));
@@ -988,8 +1018,10 @@ struct VirtualMicConfig {
 fn virtual_mic_config_from_env() -> VirtualMicConfig {
     let prefix = env_or_default("NETMIC_VIRTUAL_MIC_PREFIX", "netmic");
     let sink_name = env_or_default("NETMIC_VIRTUAL_MIC_SINK_NAME", &format!("{prefix}_sink"));
-    let source_name =
-        env_or_default("NETMIC_VIRTUAL_MIC_SOURCE_NAME", &format!("{prefix}_source"));
+    let source_name = env_or_default(
+        "NETMIC_VIRTUAL_MIC_SOURCE_NAME",
+        &format!("{prefix}_source"),
+    );
     let sink_desc = env_or_default("NETMIC_VIRTUAL_MIC_SINK_DESC", "NetMic_Virtual_Sink");
     let source_desc = env_or_default("NETMIC_VIRTUAL_MIC_SOURCE_DESC", "NetMic_Virtual_Mic");
     let state_path = PathBuf::from(env_or_default(
@@ -1033,7 +1065,10 @@ fn ensure_virtual_mic_created() -> Result<()> {
         &[
             format!("master={}.monitor", config.sink_name),
             format!("source_name={}", config.source_name),
-            format!("source_properties=device.description={}", config.source_desc),
+            format!(
+                "source_properties=device.description={}",
+                config.source_desc
+            ),
         ],
     )
     .map_err(|err| {
@@ -1066,12 +1101,18 @@ fn remove_virtual_mic() -> Result<()> {
     let (mut sink_id, mut source_id) = read_virtual_mic_state(&config.state_path);
 
     if sink_id.is_empty() {
-        sink_id = find_module_id("module-null-sink", &format!("sink_name={}", config.sink_name))
-            .unwrap_or_default();
+        sink_id = find_module_id(
+            "module-null-sink",
+            &format!("sink_name={}", config.sink_name),
+        )
+        .unwrap_or_default();
     }
     if source_id.is_empty() {
-        source_id = find_module_id("module-remap-source", &format!("source_name={}", config.source_name))
-            .unwrap_or_default();
+        source_id = find_module_id(
+            "module-remap-source",
+            &format!("source_name={}", config.source_name),
+        )
+        .unwrap_or_default();
     }
 
     if !source_id.is_empty() {
@@ -1159,7 +1200,9 @@ fn load_pactl_module(module: &str, args: &[String]) -> Result<String> {
     for arg in args {
         cmd.arg(arg);
     }
-    let output = cmd.output().map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
+    let output = cmd
+        .output()
+        .map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!(
@@ -1186,7 +1229,10 @@ fn unload_pactl_module(id: &str) -> Result<()> {
         .map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("pactl unload-module failed: {}", stderr.trim()));
+        return Err(anyhow::anyhow!(
+            "pactl unload-module failed: {}",
+            stderr.trim()
+        ));
     }
     Ok(())
 }

@@ -5,6 +5,7 @@
 //! - `MVP.md` 第 4 节（格式归一化与回退策略）
 
 use crate::protocol::SessionParams;
+use serde::Serialize;
 
 /// MVP 支持的编码类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +40,7 @@ pub const DEFAULT_OPUS_BITRATE_KBPS: u32 = 48;
 pub const DEFAULT_JITTER_BUFFER_MS: u32 = 100;
 
 /// 回退事件（用于日志与 UI 提示“已回退到 X”）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FallbackEvent {
     /// 发生回退的字段名。
     pub field: &'static str,
@@ -52,7 +53,7 @@ pub struct FallbackEvent {
 }
 
 /// 参数归一化结果：包含生效参数与回退记录。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NormalizeResult {
     pub effective: SessionParams,
     pub fallbacks: Vec<FallbackEvent>,
