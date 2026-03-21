@@ -8,7 +8,6 @@ import base64
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -39,6 +38,7 @@ STATUS_LABELS = {
     "streaming": "推流中",
     "error": "错误",
 }
+PROCESS_STOP_TIMEOUT_SEC = 5
 
 
 def now_iso() -> str:
@@ -157,6 +157,22 @@ def analyze_refresh_window(
         "missing_status_count": missing_status_count,
         "missing_visible_label_count": missing_visible_label_count,
     }
+
+
+def stop_ui_process(proc: subprocess.Popen[str]) -> bool:
+    if proc.poll() is not None:
+        return False
+    proc.terminate()
+    try:
+        proc.wait(timeout=PROCESS_STOP_TIMEOUT_SEC)
+        return False
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=PROCESS_STOP_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            pass
+        return True
 
 
 def evaluate_final_verdict(
@@ -478,8 +494,7 @@ def main() -> int:
             lambda event: (event.get("snapshot") or {}).get("status") == "streaming",
         )
         if stream_event is None:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             run_m1.remote_stop_server(env, remote_phase1)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = "真实 netmic-ui 未在窗口内完成前端 streaming 渲染"
@@ -520,8 +535,7 @@ def main() -> int:
             "streaming",
         )
         if stable_before_event is None:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             run_m1.remote_stop_server(env, remote_phase1)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = f"真实 netmic-ui 未达到断线前稳定运行窗口：{disconnect_after_sec}s"
@@ -573,8 +587,7 @@ def main() -> int:
             and ((event.get("snapshot") or {}).get("runtime") or {}).get("reconnect_attempts", 0) >= 1,
         )
         if reconnect_event is None:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             summary = "真实 netmic-ui 未在断线后渲染 reconnecting/connecting"
             steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
@@ -595,8 +608,7 @@ def main() -> int:
         server_restart = run_m1.remote_start_server(env, remote_phase2, port)
         run_m0.append_section(bootstrap_log, "remote-start-server-phase2", server_restart.stdout, server_restart.stderr)
         if server_restart.returncode != 0:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             output = "\n".join(part for part in (server_restart.stdout, server_restart.stderr) if part).strip()
             verdict = run_m0.classify_output(output)
@@ -623,8 +635,7 @@ def main() -> int:
             lambda event: (event.get("snapshot") or {}).get("status") == "streaming",
         )
         if recovered_event is None:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = "真实 netmic-ui 未在恢复窗口内重新渲染 streaming"
@@ -652,8 +663,7 @@ def main() -> int:
             "streaming",
         )
         if steady_after_event is None:
-            proc.terminate()
-            proc.wait(timeout=5)
+            stop_ui_process(proc)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = f"真实 netmic-ui 未达到恢复后稳定运行窗口：{post_recover_sec}s"
@@ -682,14 +692,8 @@ def main() -> int:
         )
 
         time.sleep(3)
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        finally:
-            wall_runtime_sec = time.monotonic() - app_wall_start
+        stop_ui_process(proc)
+        wall_runtime_sec = time.monotonic() - app_wall_start
 
     fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
     fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")

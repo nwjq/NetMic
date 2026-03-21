@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -286,6 +287,62 @@ class RunM3VerdictTests(unittest.TestCase):
         )
         self.assertEqual(status, "pass")
         self.assertIn("真实 netmic-ui 长测通过", summary)
+
+
+class RunM3ProcessCleanupTests(unittest.TestCase):
+    class FakeProc:
+        def __init__(self, poll_result, wait_results):
+            self._poll_result = poll_result
+            self._wait_results = list(wait_results)
+            self.calls = []
+
+        def poll(self):
+            self.calls.append("poll")
+            return self._poll_result
+
+        def terminate(self):
+            self.calls.append("terminate")
+
+        def wait(self, timeout=None):
+            self.calls.append(f"wait:{timeout}")
+            result = self._wait_results.pop(0)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        def kill(self):
+            self.calls.append("kill")
+
+    def test_stop_ui_process_returns_without_action_when_already_exited(self):
+        proc = self.FakeProc(0, [])
+
+        forced_kill = run_m3.stop_ui_process(proc)
+
+        self.assertFalse(forced_kill)
+        self.assertEqual(proc.calls, ["poll"])
+
+    def test_stop_ui_process_kills_when_graceful_wait_times_out(self):
+        proc = self.FakeProc(
+            None,
+            [
+                subprocess.TimeoutExpired(cmd="netmic-ui", timeout=run_m3.PROCESS_STOP_TIMEOUT_SEC),
+                0,
+            ],
+        )
+
+        forced_kill = run_m3.stop_ui_process(proc)
+
+        self.assertTrue(forced_kill)
+        self.assertEqual(
+            proc.calls,
+            [
+                "poll",
+                "terminate",
+                f"wait:{run_m3.PROCESS_STOP_TIMEOUT_SEC}",
+                "kill",
+                f"wait:{run_m3.PROCESS_STOP_TIMEOUT_SEC}",
+            ],
+        )
 
 
 class RunM3RefreshWindowTests(unittest.TestCase):
