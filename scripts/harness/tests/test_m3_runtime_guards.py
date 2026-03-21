@@ -206,5 +206,73 @@ class RunM3VerdictTests(unittest.TestCase):
         self.assertIn("真实 netmic-ui 长测通过", summary)
 
 
+class RunM3RefreshWindowTests(unittest.TestCase):
+    def test_refresh_window_rejects_missing_snapshot_status(self):
+        report = run_m3.analyze_refresh_window(
+            [
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+                {
+                    "ts_ms": 2000,
+                    "snapshot": {},
+                    "visible": {"status_label": "推流中"},
+                },
+            ],
+            0,
+            1,
+            "streaming",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["missing_status_count"], 1)
+
+    def test_refresh_window_rejects_visible_label_mismatch(self):
+        report = run_m3.analyze_refresh_window(
+            [
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+                {
+                    "ts_ms": 2000,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "连接中"},
+                },
+            ],
+            0,
+            1,
+            "streaming",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["unexpected_visible_labels"], ["连接中"])
+
+    def test_refresh_window_accepts_consistent_render_ack_window(self):
+        report = run_m3.analyze_refresh_window(
+            [
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+                {
+                    "ts_ms": 2500,
+                    "snapshot": {"status": "streaming"},
+                    "visible": {"status_label": "推流中"},
+                },
+            ],
+            0,
+            1,
+            "streaming",
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["expected_visible_label"], "推流中")
+
+
 if __name__ == "__main__":
     unittest.main()

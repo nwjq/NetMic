@@ -31,6 +31,14 @@ RECOVER_TIMEOUT_SEC = 15
 RECOVERY_TARGET_MS = 10_000
 REFRESH_GAP_TARGET_MS = 3_000
 STABILITY_WAIT_PAD_SEC = 30
+STATUS_LABELS = {
+    "idle": "空闲",
+    "connecting": "连接中",
+    "listening": "监听中",
+    "connected": "已连接",
+    "streaming": "推流中",
+    "error": "错误",
+}
 
 
 def now_iso() -> str:
@@ -77,6 +85,10 @@ def event_status(event: Dict[str, object]) -> str:
     return str((event.get("snapshot") or {}).get("status") or "")
 
 
+def event_visible_label(event: Dict[str, object]) -> str:
+    return str((event.get("visible") or {}).get("status_label") or "")
+
+
 def wait_for_event_span(
     event_log: Path,
     start_index: int,
@@ -113,22 +125,37 @@ def analyze_refresh_window(
     window = events[start_index : end_index + 1]
     timestamps = [event_ts_ms(event) for event in window if event_ts_ms(event) > 0]
     statuses = [event_status(event) for event in window if event_status(event)]
+    visible_labels = [event_visible_label(event) for event in window if event_visible_label(event)]
     max_gap_ms = 0
     if len(timestamps) >= 2:
         max_gap_ms = max(
             later - earlier for earlier, later in zip(timestamps, timestamps[1:])
         )
     unexpected_statuses = sorted({status for status in statuses if status != expected_status})
+    expected_visible_label = STATUS_LABELS.get(expected_status, "")
+    missing_status_count = sum(1 for event in window if not event_status(event))
+    missing_visible_label_count = sum(1 for event in window if not event_visible_label(event))
+    unexpected_visible_labels = sorted(
+        {label for label in visible_labels if label != expected_visible_label}
+    )
     return {
         "ok": len(timestamps) >= 2
+        and not missing_status_count
+        and not missing_visible_label_count
         and not unexpected_statuses
+        and not unexpected_visible_labels
         and max_gap_ms <= REFRESH_GAP_TARGET_MS,
         "event_count": len(window),
         "span_ms": (timestamps[-1] - timestamps[0]) if len(timestamps) >= 2 else 0,
         "max_gap_ms": max_gap_ms,
         "expected_status": expected_status,
+        "expected_visible_label": expected_visible_label,
         "statuses": sorted(set(statuses)),
         "unexpected_statuses": unexpected_statuses,
+        "visible_labels": sorted(set(visible_labels)),
+        "unexpected_visible_labels": unexpected_visible_labels,
+        "missing_status_count": missing_status_count,
+        "missing_visible_label_count": missing_visible_label_count,
     }
 
 
