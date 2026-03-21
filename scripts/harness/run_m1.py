@@ -93,6 +93,22 @@ def remote_start_server(env: Dict[str, str], remote_dir: str, port: int) -> run_
     script = f"""
 set -euo pipefail
 mkdir -p {remote_dir}
+if [ -f {remote_dir}/server.pid ]; then
+  pid="$(cat {remote_dir}/server.pid || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+      sleep 1
+    fi
+  fi
+fi
 rm -f {remote_dir}/server.pid {remote_dir}/runtime.log {remote_dir}/audio_dump.pcm
 nohup env \
   RUST_LOG=info \
@@ -103,6 +119,7 @@ nohup env \
   cargo run -p netmic-server --quiet \
   > {remote_dir}/runtime.log 2>&1 < /dev/null &
 echo $! > {remote_dir}/server.pid
+sleep 1
 cat {remote_dir}/server.pid
 """
     return run_m0.run_remote(env, script)
@@ -113,8 +130,20 @@ def remote_stop_server(env: Dict[str, str], remote_dir: str) -> run_m0.CommandRe
 set +e
 if [ -f {remote_dir}/server.pid ]; then
   pid="$(cat {remote_dir}/server.pid)"
-  kill "$pid" >/dev/null 2>&1 || true
-  sleep 1
+  if [ -n "$pid" ]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+      sleep 1
+    fi
+  fi
+  rm -f {remote_dir}/server.pid
 fi
 """
     return run_m0.run_remote(env, script)
