@@ -477,6 +477,7 @@ def main() -> int:
 
     app_wall_start = time.monotonic()
     wall_runtime_sec = 0.0
+    phase2_started = False
     with client_runtime_log.open("w", encoding="utf-8") as handle:
         proc = subprocess.Popen(
             ["cargo", "run", "-p", "netmic-ui", "--quiet"],
@@ -627,6 +628,7 @@ def main() -> int:
             )
             print(summary)
             return 2 if verdict == "blocked" else 1
+        phase2_started = True
 
         recovered_index, recovered_event = wait_for_event(
             render_log_path,
@@ -636,6 +638,7 @@ def main() -> int:
         )
         if recovered_event is None:
             stop_ui_process(proc)
+            run_m1.remote_stop_server(env, remote_phase2)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = "真实 netmic-ui 未在恢复窗口内重新渲染 streaming"
@@ -664,6 +667,7 @@ def main() -> int:
         )
         if steady_after_event is None:
             stop_ui_process(proc)
+            run_m1.remote_stop_server(env, remote_phase2)
             fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
             fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
             summary = f"真实 netmic-ui 未达到恢复后稳定运行窗口：{post_recover_sec}s"
@@ -696,8 +700,9 @@ def main() -> int:
         wall_runtime_sec = time.monotonic() - app_wall_start
 
     fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
-    fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
-    run_m1.remote_stop_server(env, remote_phase2)
+    if phase2_started:
+        fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
+        run_m1.remote_stop_server(env, remote_phase2)
 
     backend_events = load_events(event_log_path)
     events = load_events(render_log_path)
