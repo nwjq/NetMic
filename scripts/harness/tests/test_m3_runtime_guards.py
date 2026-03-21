@@ -164,6 +164,88 @@ class CoordinatorRepoFreshnessTests(unittest.TestCase):
         self.assertIn("scripts/harness/coordinator.py", note)
 
 
+class CoordinatorSyntheticAttemptStateTests(unittest.TestCase):
+    def setUp(self):
+        self.original_repo_state = coordinator.CURRENT_REPO_STATE
+        coordinator.CURRENT_REPO_STATE = {
+            "head_commit": "current-head",
+            "branch": "develop",
+            "dirty": False,
+            "fingerprint": None,
+            "changed_paths": [],
+        }
+
+    def tearDown(self):
+        coordinator.CURRENT_REPO_STATE = self.original_repo_state
+
+    def test_pre_dispatch_blocked_is_attached_to_first_pending_milestone(self):
+        state = coordinator.build_state(
+            Path("/tmp/netmic-runs"),
+            [],
+            "M3",
+            synthetic_attempt={
+                "milestone_id": "M0",
+                "run_id": "coordinator-20260322T040000",
+                "status": "blocked",
+                "summary": "远端工作区同步预检失败：ssh: connect to host 192.168.11.1 port 22: Operation not permitted",
+                "finished_at": "2026-03-22T04:00:00+08:00",
+                "_report_path": "/tmp/netmic-runs/coordinator-20260322T040000/report.json",
+                "_synthetic": True,
+            },
+        )
+
+        milestones = {item["id"]: item for item in state["milestones"]}
+        self.assertEqual(milestones["M0"]["latest_attempt_status"], "blocked")
+        self.assertIn("Operation not permitted", milestones["M0"]["note"])
+        self.assertEqual(
+            milestones["M0"]["latest_attempt_run"],
+            "coordinator-20260322T040000",
+        )
+        self.assertIsNone(milestones["M1"]["latest_attempt_status"])
+
+    def test_pre_dispatch_blocked_moves_to_next_unfinished_milestone_after_m0_pass(self):
+        report = {
+            "run_id": "m0-pass",
+            "status": "pass",
+            "finished_at": "2026-03-22T03:00:00+08:00",
+            "_report_path": "/tmp/netmic-runs/m0-pass/report.json",
+            "_manifest": {
+                "milestone": "M0",
+                "repo": {
+                    "head_commit": "current-head",
+                    "branch": "develop",
+                    "dirty": False,
+                    "fingerprint": None,
+                    "changed_paths": [],
+                },
+            },
+            "_recovery": {},
+        }
+
+        state = coordinator.build_state(
+            Path("/tmp/netmic-runs"),
+            [report],
+            "M3",
+            synthetic_attempt={
+                "milestone_id": "M1",
+                "run_id": "coordinator-20260322T041000",
+                "status": "blocked",
+                "summary": "远端工作区同步预检失败：ssh: connect to host 192.168.11.1 port 22: Operation not permitted",
+                "finished_at": "2026-03-22T04:10:00+08:00",
+                "_report_path": "/tmp/netmic-runs/coordinator-20260322T041000/report.json",
+                "_synthetic": True,
+            },
+        )
+
+        milestones = {item["id"]: item for item in state["milestones"]}
+        self.assertEqual(milestones["M0"]["status"], "pass")
+        self.assertEqual(milestones["M0"]["latest_attempt_status"], "pass")
+        self.assertIsNone(milestones["M0"]["note"])
+        self.assertEqual(milestones["M1"]["latest_attempt_status"], "blocked")
+        self.assertIn("Operation not permitted", milestones["M1"]["note"])
+        self.assertIsNone(milestones["M2"]["latest_attempt_status"])
+
+
 class RunM3VerdictTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()

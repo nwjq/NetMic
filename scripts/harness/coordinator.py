@@ -365,15 +365,50 @@ def latest_report_for_milestone(
     return candidates[-1]
 
 
+def synthetic_attempt_note(attempt: Dict[str, object]) -> Optional[str]:
+    status = str(attempt.get("status") or "").strip()
+    summary = str(attempt.get("summary") or "").strip()
+    if status and summary:
+        return f"最近一次 run 为 {status}：{summary}"
+    if status:
+        return f"最近一次 run 为 {status}"
+    return summary or None
+
+
+def latest_attempt_for_milestone(
+    reports: List[Dict[str, object]],
+    milestone_id: str,
+    synthetic_attempt: Optional[Dict[str, object]] = None,
+) -> Optional[Dict[str, object]]:
+    candidates: List[Dict[str, object]] = []
+    latest_report = latest_report_for_milestone(reports, milestone_id)
+    if latest_report is not None:
+        candidates.append(latest_report)
+    if synthetic_attempt and synthetic_attempt.get("milestone_id") == milestone_id:
+        candidates.append(synthetic_attempt)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: str(item.get("finished_at", "")))
+    return candidates[-1]
+
+
 def build_state(
     artifact_root: Path,
     reports: List[Dict[str, object]],
     target: str,
+    synthetic_attempt: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     milestones = []
     for spec in WORKFLOW:
         latest = latest_pass_for_milestone(reports, spec.id)
-        latest_attempt = latest_report_for_milestone(reports, spec.id)
+        latest_attempt = latest_attempt_for_milestone(reports, spec.id, synthetic_attempt)
+        if latest is None and latest_attempt:
+            if latest_attempt.get("_synthetic"):
+                note = synthetic_attempt_note(latest_attempt)
+            else:
+                note = report_completion_note(latest_attempt, spec.id)
+        else:
+            note = None
         milestones.append(
             {
                 "id": spec.id,
@@ -390,9 +425,7 @@ def build_state(
                 "latest_attempt_report": display_path(Path(str(latest_attempt["_report_path"])))
                 if latest_attempt
                 else None,
-                "note": report_completion_note(latest_attempt, spec.id)
-                if latest is None and latest_attempt
-                else None,
+                "note": note,
             }
         )
     return {
@@ -517,6 +550,7 @@ def main() -> int:
     artifact_root = artifact_root_from_env(env)
     coordinator_run_id = datetime.now().astimezone().strftime("coordinator-%Y%m%dT%H%M%S")
     reports = load_run_reports(artifact_root)
+    unfinished = find_first_unfinished(reports, args.until)
     state = build_state(artifact_root, reports, args.until)
     write_json(STATE_PATH, state)
 
@@ -639,7 +673,23 @@ def main() -> int:
     )
 
     refreshed_reports = load_run_reports(artifact_root)
-    state = build_state(artifact_root, refreshed_reports, args.until)
+    synthetic_attempt = None
+    if unfinished is not None and final_status != "pass":
+        synthetic_attempt = {
+            "milestone_id": unfinished.id,
+            "run_id": coordinator_run_id,
+            "status": final_status,
+            "summary": final_summary,
+            "finished_at": now_iso(),
+            "_report_path": str(report_path),
+            "_synthetic": True,
+        }
+    state = build_state(
+        artifact_root,
+        refreshed_reports,
+        args.until,
+        synthetic_attempt=synthetic_attempt,
+    )
     state["coordinator"] = {
         "last_run": display_path(report_path),
         "status": final_status,

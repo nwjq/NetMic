@@ -78,7 +78,7 @@ Harness 运行前，默认已由上游文档确定：
   - 每次启动先检查本地工作区是否已同步到 Linux 远端仓库，必要时先执行同步
   - 只承认“源码快照与当前本地仓库一致”的历史 `pass`；旧产物若对应旧 commit、旧 dirty worktree 或缺少 repo 快照，必须重新验收
   - 判断每个里程碑是否已有 `pass`
-  - 若某个里程碑仍是 `pending`，在 `.harness/coordinator_state.json` 中记录最近一次尝试及原因
+  - 若某个里程碑仍是 `pending`，在 `.harness/coordinator_state.json` 中记录最近一次尝试及原因；若 coordinator 在派发 runner 前就被远端同步预检 `blocked/fail`，该结果也算第一个未完成里程碑的最近一次尝试
   - 从第一个未完成里程碑继续循环调度 runner，直到目标里程碑或真实 `fail/blocked`
   - runner 缺失时输出 `fail`，而不是把“未实现”误判成“已完成”
 - `M0`：`scripts/harness/run_m0.py`
