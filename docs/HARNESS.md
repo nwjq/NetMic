@@ -80,21 +80,25 @@ Harness 运行前，默认已由上游文档确定：
   - runner 缺失时输出 `fail`，而不是把“未实现”误判成“已完成”
 - `M0`：`scripts/harness/run_m0.py`
   - 读取 `.harness/hosts.env`
+  - 先把本地工作区同步到 Linux 侧仓库
   - 通过 SSH 进入 Linux 侧仓库
   - 执行 `audio_selfcheck.sh` / `virtual_mic.sh create|status` / `virtual_mic_smoke.sh`
   - 生成 `manifest.json` / `report.json` / `server/*` / `ui/*`
   - 输出统一 `pass` / `fail` / `blocked`
 - `M1`：`scripts/harness/run_m1.py`
+  - 先把本地工作区同步到 Linux 侧仓库
   - 远端启动 `netmic-server`
   - 本地启动 `netmic-client`
   - 通过远端 loopback 查询 `server_status`
   - 回收 `client/server` 日志、`status.json`、`audio_dump.pcm`
   - 生成 `ui/*` 产物并输出统一 verdict
 - `M2`：`scripts/harness/run_m2.py`
+  - 先把本地工作区同步到 Linux 侧仓库
   - 以参数矩阵驱动 `netmic-client`
   - 回收 `session-report.json`、`audio_dump.pcm` 与 UI 可见产物
   - 校验请求参数 / 生效参数 / fallback / UI 展示一致
 - `M3`：`scripts/harness/run_m3.py`
+  - 先把本地工作区同步到 Linux 侧仓库
   - 本地启动真实 `netmic-ui`（Harness 自动拉起）
   - 默认执行 30 分钟真实 App 长测，并在中途打断/恢复远端 `netmic-server`
   - 校验断线前/恢复后的 snapshot 刷新连续性与稳定窗口
@@ -190,16 +194,19 @@ UI 对齐要求：
 
 1. `prepare`
    - 校验 `.harness/hosts.env`
-   - 校验本机依赖（`ssh`、必要时 `sshpass`、`rsync`、`node`）
-   - 先确认本地工作区已同步到 Linux 远端仓库；未同步则由 coordinator 先补同步
-2. `bootstrap-linux`
+   - 校验本机依赖（`ssh`、必要时 `sshpass`、`node`）
+2. `sync-remote`
+   - 对比本地工作区与 Linux 侧仓库
+   - 若不一致，则通过 `rsync` 先把远端工作区同步到当前本地状态
+   - `.harness/hosts.env`、`.harness/runs/`、`.codex/`、`target/`、`node_modules/` 不进入同步范围
+3. `bootstrap-linux`
    - `scripts/linux/audio_selfcheck.sh --json`
    - `scripts/linux/virtual_mic.sh create`
    - `scripts/linux/virtual_mic.sh status --json`
-3. `run`
+4. `run`
    - `scripts/linux/virtual_mic_smoke.sh --duration <sec>`
    - 若日志显示“跳过音频写入”，该 run 不能判为 `pass`
-4. `ui-verify`
+5. `ui-verify`
    - 根据服务端状态生成 `ui/snapshot.json`
    - 用 `scripts/harness/render_ui_artifacts.mjs` 生成可见产物
 

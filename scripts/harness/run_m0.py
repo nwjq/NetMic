@@ -22,8 +22,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import sync_remote
-
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HOSTS_ENV = ROOT / ".harness" / "hosts.env"
@@ -251,6 +249,37 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
         "pass",
         "已将本地工作区同步到远端",
         [dry_run_result, apply_result],
+    )
+
+
+def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
+    log_path = server_dir / "remote-sync.log"
+    state_path = server_dir / "remote-sync.json"
+    status, summary, results = sync_remote_workspace(env)
+    titles = ["rsync-dry-run", "rsync-apply"]
+    for index, result in enumerate(results):
+        title = titles[index] if index < len(titles) else f"rsync-step-{index + 1}"
+        append_section(log_path, title, result.stdout, result.stderr)
+    write_json(
+        state_path,
+        {
+            "status": status,
+            "summary": summary,
+            "commands": [
+                {
+                    "command": result.command,
+                    "returncode": result.returncode,
+                }
+                for result in results
+            ],
+            "updated_at": now_iso(),
+        },
+    )
+    return StepResult(
+        "sync-remote",
+        status,
+        summary,
+        [relative_artifact(log_path), relative_artifact(state_path)],
     )
 
 
@@ -528,6 +557,7 @@ def main() -> int:
     prepare_status, prepare_summary = require_local_tools(
         password_auth=bool(env.get("NETMIC_HARNESS_LINUX_PASSWORD", "") and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")),
         needs_node=True,
+        needs_rsync=True,
     )
     prepare_artifacts = [relative_artifact(run_dir / "manifest.json")]
     steps.append(StepResult("prepare", prepare_status, prepare_summary, prepare_artifacts))
@@ -545,11 +575,7 @@ def main() -> int:
         print(prepare_summary)
         return 2
 
-    sync_step = sync_remote.ensure_remote_head_synced(
-        env,
-        server_dir / "remote-sync.log",
-        server_dir / "remote-sync.json",
-    )
+    sync_step = run_remote_sync_step(env, server_dir)
     steps.append(sync_step)
     logs.append(step_log("info" if sync_step.status == "pass" else "error", sync_step.summary))
     if sync_step.status != "pass":

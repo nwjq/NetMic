@@ -13,6 +13,13 @@ stub_dir="$tmpdir/stubs"
 artifact_root="$tmpdir/runs"
 mkdir -p "$stub_dir" "$artifact_root"
 
+cat >"$stub_dir/rsync" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF
+chmod +x "$stub_dir/rsync"
+
 cat >"$stub_dir/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

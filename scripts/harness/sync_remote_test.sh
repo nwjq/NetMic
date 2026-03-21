@@ -64,7 +64,6 @@ run_case() {
   RSYNC_TEST_LOG="$log_path" \
   PYTHONPATH="$ROOT/scripts/harness" \
   python3 - "$workspace" "$expect_status" "$expect_summary" "$expect_calls" "$log_path" <<'PY'
-import json
 import pathlib
 import sys
 

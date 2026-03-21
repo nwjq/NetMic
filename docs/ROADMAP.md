@@ -29,6 +29,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 **当前实现入口（2026-03-21）**
 - `scripts/harness/run_m0.py`
   - 统一读取 `.harness/hosts.env`
+  - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 远端执行 `audio_selfcheck.sh`、`virtual_mic.sh create|status`、`virtual_mic_smoke.sh`
   - 产物落在 `.harness/runs/<run_id>/`
   - 同步生成 `ui/snapshot.json`、`visible-status.json`、`visible-config.json`、`visible-logs.json`、`refresh-check.json`
@@ -55,6 +56,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 
 **当前实现入口（2026-03-21）**
 - `scripts/harness/run_m1.py`
+  - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 远端拉起 `netmic-server`
   - 本地按 Harness 环境启动 `netmic-client`
   - 观测服务端运行中的 `streaming` 状态
@@ -83,6 +85,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 
 **当前实现入口（2026-03-21）**
 - `scripts/harness/run_m2.py`
+  - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 执行合法参数与 fallback 参数矩阵
   - 回收 `client/session-report.json`
   - 校验 UI 参数页、状态页、fallback 展示一致
@@ -108,6 +111,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 
 **当前实现入口（2026-03-21）**
 - `scripts/harness/run_m3.py`
+  - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 启动真实 `netmic-ui`
   - 默认执行 30 分钟真实 App 长测
   - 自动打断并恢复远端 `netmic-server`

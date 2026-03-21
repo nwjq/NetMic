@@ -246,6 +246,7 @@ def main() -> int:
     prepare_status, prepare_summary = run_m0.require_local_tools(
         password_auth=bool(env.get("NETMIC_HARNESS_LINUX_PASSWORD", "") and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")),
         needs_node=True,
+        needs_rsync=True,
     )
     if shutil.which("cargo") is None:
         prepare_status = "blocked"
@@ -272,6 +273,23 @@ def main() -> int:
         )
         print(prepare_summary)
         return 2
+
+    sync_step = run_m0.run_remote_sync_step(env, server_dir)
+    steps.append(sync_step)
+    if sync_step.status != "pass":
+        run_m0.write_json(
+            run_dir / "report.json",
+            {
+                "run_id": run_id,
+                "status": sync_step.status,
+                "summary": sync_step.summary,
+                "started_at": manifest["started_at"],
+                "finished_at": now_iso(),
+                "steps": [run_m0.asdict(step) for step in steps],
+            },
+        )
+        print(sync_step.summary)
+        return 2 if sync_step.status == "blocked" else 1
 
     port = int(env.get("NETMIC_HARNESS_SERVER_PORT", "43000") or "43000")
     remote_phase1 = f"{env['NETMIC_HARNESS_LINUX_ROOT']}/.harness/runs/{run_id}/server-phase1"
