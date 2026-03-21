@@ -1,8 +1,58 @@
-# NetMic 运行时环境变量清单（NETMIC_*）
+# NetMic 运行时与现场配置清单
 
 说明：
-- 本文只覆盖 `NETMIC_*` 前缀变量；通用变量（如 `RUST_LOG`）不在此列。
+- 本文只定义运行时变量和现场配置字段。
+- 通用变量（如 `RUST_LOG`）不在此列。
 - 未设置时均按代码/脚本中的默认值处理。
+
+总控机制见 `docs/OPERATING_MODEL.md`，执行链路见 `docs/HARNESS.md`。
+
+## Harness（本地配置，建议写入 `.harness/hosts.env`）
+
+说明：
+- 这部分用于双机编排与本地现场信息，不应提交到 Git。
+- 推荐做法：复制 `.harness/hosts.env.example` 为 `.harness/hosts.env` 后填写。
+- 连接与认证方式由用户自行决定。
+
+- `NETMIC_HARNESS_COORDINATOR_ROOT`
+  - 默认值：当前仓库根目录
+  - 用途：Coordinator 本地工作目录。
+- `NETMIC_HARNESS_LINUX_HOST`
+  - 默认值：未设置
+  - 用途：Linux 服务端主机地址。
+- `NETMIC_HARNESS_LINUX_PORT`
+  - 默认值：`22`
+  - 用途：Linux SSH 端口。
+- `NETMIC_HARNESS_LINUX_USER`
+  - 默认值：未设置
+  - 用途：Linux SSH 用户名。
+- `NETMIC_HARNESS_LINUX_ROOT`
+  - 默认值：未设置
+  - 用途：Linux 侧仓库路径。
+- `NETMIC_HARNESS_LINUX_PASSWORD`
+  - 默认值：未设置
+  - 用途：Linux 连接密码；可选。
+- `NETMIC_HARNESS_LINUX_SSH_KEY`
+  - 默认值：未设置
+  - 用途：Linux SSH 私钥路径；可选。
+- `NETMIC_HARNESS_MAC_ROOT`
+  - 默认值：当前仓库根目录
+  - 用途：macOS 本地仓库路径。
+- `NETMIC_HARNESS_SERVER_HOST`
+  - 默认值：跟随 `NETMIC_HARNESS_LINUX_HOST`
+  - 用途：客户端访问服务端时使用的地址。
+- `NETMIC_HARNESS_SERVER_PORT`
+  - 默认值：`43000`
+  - 用途：服务端 UDP 监听端口，也是默认控制面端口。
+- `NETMIC_HARNESS_CLIENT_INPUT_DEVICE`
+  - 默认值：未设置
+  - 用途：客户端默认输入设备名；为空时允许回退到系统默认设备。
+- `NETMIC_HARNESS_ARTIFACT_DIR`
+  - 默认值：`.harness/runs`
+  - 用途：run 产物输出目录。
+- `NETMIC_HARNESS_SSH_OPTS`
+  - 默认值：未设置
+  - 用途：附加 SSH 参数，例如 `-o StrictHostKeyChecking=no`。
 
 ## Client（netmic-client）
 

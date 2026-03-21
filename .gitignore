@@ -14,6 +14,10 @@
 .autopilot/supervisor_state.env
 .autopilot/restart.requested
 
+# NetMic Harness 本地配置与产物
+.harness/hosts.env
+.harness/runs/
+
 # Agent Hub 本地数据库
 agent_hub.db
 
