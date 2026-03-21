@@ -102,6 +102,7 @@ Harness 运行前，默认已由上游文档确定：
   - 本地启动真实 `netmic-ui`（Harness 自动拉起）
   - 默认执行 30 分钟真实 App 长测，并在中途打断/恢复远端 `netmic-server`
   - 若通过 `--app-runtime-sec` 传入更短时长，只能作为调试 run；该 run 不得产出 `M3 pass`
+  - M3 `pass` 必须同时满足“配置目标时长达标”与“真实 wall-clock 运行时长达标”；不能只依赖事件时间戳或 manifest 声明值
   - 以前端 render ack 校验断线前/恢复后的真实 UI 刷新连续性与稳定窗口
   - 回收真实 App 的 snapshot/event log/render log、phase1/phase2 音频 dump 与 UI 恢复产物
 

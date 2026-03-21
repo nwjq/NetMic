@@ -132,6 +132,63 @@ def analyze_refresh_window(
     }
 
 
+def evaluate_final_verdict(
+    ui_ok: bool,
+    stable_before_report: Dict[str, object],
+    stable_after_report: Dict[str, object],
+    app_runtime_sec: int,
+    wall_runtime_sec: float,
+    recovery_ms: int,
+    phase2_audio_dump: Path,
+) -> Tuple[str, str]:
+    if not ui_ok:
+        return ("fail", "M3 UI 产物渲染失败")
+
+    if not stable_before_report["ok"]:
+        return (
+            "fail",
+            "M3 断线前长时刷新不达标："
+            f"event_count={stable_before_report['event_count']}, "
+            f"max_gap_ms={stable_before_report['max_gap_ms']}, "
+            f"unexpected={stable_before_report['unexpected_statuses']}",
+        )
+
+    if not stable_after_report["ok"]:
+        return (
+            "fail",
+            "M3 恢复后长时刷新不达标："
+            f"event_count={stable_after_report['event_count']}, "
+            f"max_gap_ms={stable_after_report['max_gap_ms']}, "
+            f"unexpected={stable_after_report['unexpected_statuses']}",
+        )
+
+    if wall_runtime_sec < float(app_runtime_sec):
+        return (
+            "fail",
+            "M3 实际运行时长不达标："
+            f"{wall_runtime_sec:.1f}s（要求至少 {app_runtime_sec}s）",
+        )
+
+    if app_runtime_sec < MIN_PASS_RUNTIME_SEC:
+        return (
+            "fail",
+            "M3 运行时长不达标："
+            f"{app_runtime_sec}s（要求至少 {MIN_PASS_RUNTIME_SEC}s）",
+        )
+
+    if recovery_ms <= 0 or recovery_ms > RECOVERY_TARGET_MS:
+        return ("fail", f"M3 恢复时长不达标：{recovery_ms} ms")
+
+    if not phase2_audio_dump.exists() or phase2_audio_dump.stat().st_size <= 0:
+        return ("fail", "M3 phase2 audio dump 为空，恢复后未形成音频流")
+
+    return (
+        "pass",
+        "M3 Harness 完成：真实 netmic-ui 长测通过，"
+        f"总运行 {wall_runtime_sec:.1f}s，断线后 {recovery_ms} ms 内恢复",
+    )
+
+
 def fetch_remote_artifacts(env: Dict[str, str], remote_dir: str, server_dir: Path) -> None:
     run_m0.ensure_dir(server_dir)
     runtime = run_m1.remote_fetch_text(env, f"{remote_dir}/runtime.log")
@@ -373,6 +430,8 @@ def main() -> int:
     if env.get("NETMIC_HARNESS_CLIENT_INPUT_DEVICE", "").strip():
         client_env["NETMIC_UI_HARNESS_INPUT_DEVICE"] = env["NETMIC_HARNESS_CLIENT_INPUT_DEVICE"].strip()
 
+    app_wall_start = time.monotonic()
+    wall_runtime_sec = 0.0
     with client_runtime_log.open("w", encoding="utf-8") as handle:
         proc = subprocess.Popen(
             ["cargo", "run", "-p", "netmic-ui", "--quiet"],
@@ -598,6 +657,8 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+        finally:
+            wall_runtime_sec = time.monotonic() - app_wall_start
 
     fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
     fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
@@ -631,43 +692,15 @@ def main() -> int:
     ]
     for step in ui_steps:
         steps.append(step)
-    if any(step.status != "pass" for step in ui_steps):
-        summary = "M3 UI 产物渲染失败"
-        final_status = "fail"
-    elif not stable_before_report["ok"]:
-        summary = (
-            "M3 断线前长时刷新不达标："
-            f"event_count={stable_before_report['event_count']}, "
-            f"max_gap_ms={stable_before_report['max_gap_ms']}, "
-            f"unexpected={stable_before_report['unexpected_statuses']}"
-        )
-        final_status = "fail"
-    elif not stable_after_report["ok"]:
-        summary = (
-            "M3 恢复后长时刷新不达标："
-            f"event_count={stable_after_report['event_count']}, "
-            f"max_gap_ms={stable_after_report['max_gap_ms']}, "
-            f"unexpected={stable_after_report['unexpected_statuses']}"
-        )
-        final_status = "fail"
-    elif app_runtime_sec < MIN_PASS_RUNTIME_SEC:
-        summary = (
-            "M3 运行时长不达标："
-            f"{app_runtime_sec}s（要求至少 {MIN_PASS_RUNTIME_SEC}s）"
-        )
-        final_status = "fail"
-    elif recovery_ms <= 0 or recovery_ms > RECOVERY_TARGET_MS:
-        summary = f"M3 恢复时长不达标：{recovery_ms} ms"
-        final_status = "fail"
-    elif not (server_dir / "phase2" / "audio_dump.pcm").exists() or (server_dir / "phase2" / "audio_dump.pcm").stat().st_size <= 0:
-        summary = "M3 phase2 audio dump 为空，恢复后未形成音频流"
-        final_status = "fail"
-    else:
-        summary = (
-            "M3 Harness 完成：真实 netmic-ui 长测通过，"
-            f"总运行 {app_runtime_sec}s，断线后 {recovery_ms} ms 内恢复"
-        )
-        final_status = "pass"
+    final_status, summary = evaluate_final_verdict(
+        ui_ok=all(step.status == "pass" for step in ui_steps),
+        stable_before_report=stable_before_report,
+        stable_after_report=stable_after_report,
+        app_runtime_sec=app_runtime_sec,
+        wall_runtime_sec=wall_runtime_sec,
+        recovery_ms=recovery_ms,
+        phase2_audio_dump=server_dir / "phase2" / "audio_dump.pcm",
+    )
 
     steps.append(
         run_m0.StepResult(
@@ -698,6 +731,7 @@ def main() -> int:
             "app_runtime_sec": app_runtime_sec,
             "disconnect_after_sec": disconnect_after_sec,
             "post_recover_sec": post_recover_sec,
+            "wall_runtime_sec": wall_runtime_sec,
             "refresh_gap_target_ms": REFRESH_GAP_TARGET_MS,
             "stable_before": stable_before_report,
             "stable_after": stable_after_report,
@@ -718,6 +752,7 @@ def main() -> int:
             "finished_at": now_iso(),
             "steps": [run_m0.asdict(step) for step in steps],
             "recovery_ms": recovery_ms,
+            "wall_runtime_sec": wall_runtime_sec,
         },
     )
     print(f"{final_status}: {summary}")

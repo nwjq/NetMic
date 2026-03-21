@@ -141,11 +141,14 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
 
     app_runtime_sec = int(runtime.get("app_runtime_sec") or 0)
     recovery_ms = int(recovery.get("recovery_ms") or report.get("recovery_ms") or 0)
+    wall_runtime_sec = extract_wall_runtime_sec(report, recovery)
     stable_before = recovery.get("stable_before", {})
     stable_after = recovery.get("stable_after", {})
 
     return (
         app_runtime_sec >= M3_MIN_APP_RUNTIME_SEC
+        and wall_runtime_sec is not None
+        and wall_runtime_sec >= M3_MIN_APP_RUNTIME_SEC
         and recovery_ms > 0
         and recovery_ms <= M3_MAX_RECOVERY_MS
         and isinstance(stable_before, dict)
@@ -153,6 +156,35 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
         and isinstance(stable_after, dict)
         and bool(stable_after.get("ok"))
     )
+
+
+def parse_iso_datetime(value: object) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def extract_wall_runtime_sec(
+    report: Dict[str, object],
+    recovery: Dict[str, object],
+) -> Optional[float]:
+    for container in (report, recovery):
+        raw_value = container.get("wall_runtime_sec")
+        if isinstance(raw_value, (int, float)):
+            return float(raw_value)
+
+    started_at = parse_iso_datetime(report.get("started_at"))
+    finished_at = parse_iso_datetime(report.get("finished_at"))
+    if started_at is None or finished_at is None:
+        return None
+
+    elapsed = (finished_at - started_at).total_seconds()
+    if elapsed < 0:
+        return None
+    return elapsed
 
 
 def latest_pass_for_milestone(
