@@ -485,13 +485,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic M2 harness")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
     parser.add_argument("--run-id", default="")
-    parser.add_argument("--duration", type=int, default=DEFAULT_DURATION_SEC)
+    parser.add_argument("--duration", type=int, default=None)
     args = parser.parse_args()
 
     hosts_env = Path(args.hosts_env).expanduser().resolve()
     run_id = args.run_id or datetime.now().astimezone().strftime("m2-%Y%m%dT%H%M%S")
-    duration_sec = max(3, int(args.duration))
     env = run_m0.parse_env_file(hosts_env)
+    duration_sec = (
+        max(3, int(args.duration))
+        if args.duration is not None
+        else run_m0.env_int(env, "NETMIC_HARNESS_M2_DURATION_SEC", DEFAULT_DURATION_SEC, 3)
+    )
     artifact_root_raw = env.get("NETMIC_HARNESS_ARTIFACT_DIR", ".harness/runs")
     artifact_root = Path(artifact_root_raw) if os.path.isabs(artifact_root_raw) else ROOT / artifact_root_raw
     run_dir = artifact_root / run_id

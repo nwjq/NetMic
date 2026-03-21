@@ -102,6 +102,17 @@ def parse_env_file(path: Path) -> Dict[str, str]:
     return env
 
 
+def env_int(env: Dict[str, str], key: str, default: int, min_value: int) -> int:
+    raw = env.get(key, "").strip()
+    if not raw:
+        return max(min_value, default)
+    try:
+        value = int(raw)
+    except ValueError:
+        return max(min_value, default)
+    return max(min_value, value)
+
+
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -733,18 +744,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic M0 harness")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
     parser.add_argument("--run-id", default="")
-    parser.add_argument("--duration", type=int, default=DEFAULT_DURATION_SEC)
+    parser.add_argument("--duration", type=int, default=None)
     args = parser.parse_args()
 
     hosts_env = Path(args.hosts_env).expanduser().resolve()
     run_id = args.run_id or datetime.now().astimezone().strftime("m0-%Y%m%dT%H%M%S")
-    duration_sec = max(1, int(args.duration))
-
     if not hosts_env.exists():
         print(f"blocked: hosts env not found: {hosts_env}", file=sys.stderr)
         return 2
 
     env = parse_env_file(hosts_env)
+    duration_sec = (
+        max(1, int(args.duration))
+        if args.duration is not None
+        else env_int(env, "NETMIC_HARNESS_M0_DURATION_SEC", DEFAULT_DURATION_SEC, 1)
+    )
     artifact_root_raw = env.get("NETMIC_HARNESS_ARTIFACT_DIR", ".harness/runs")
     artifact_root = (
         Path(artifact_root_raw).expanduser()

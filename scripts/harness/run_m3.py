@@ -652,16 +652,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic M3 harness")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
     parser.add_argument("--run-id", default="")
-    parser.add_argument("--app-runtime-sec", type=int, default=APP_RUNTIME_SEC)
-    parser.add_argument("--disconnect-after-sec", type=int, default=DEFAULT_DISCONNECT_AFTER_SEC)
+    parser.add_argument("--app-runtime-sec", type=int, default=None)
+    parser.add_argument("--disconnect-after-sec", type=int, default=None)
     args = parser.parse_args()
 
     hosts_env = Path(args.hosts_env).expanduser().resolve()
     run_id = args.run_id or datetime.now().astimezone().strftime("m3-%Y%m%dT%H%M%S")
-    app_runtime_sec = max(30, int(args.app_runtime_sec))
-    disconnect_after_sec = max(5, int(args.disconnect_after_sec))
-    disconnect_after_sec = min(disconnect_after_sec, max(5, app_runtime_sec - 5))
     env = run_m0.parse_env_file(hosts_env)
+    app_runtime_sec = (
+        max(30, int(args.app_runtime_sec))
+        if args.app_runtime_sec is not None
+        else run_m0.env_int(env, "NETMIC_HARNESS_M3_APP_RUNTIME_SEC", APP_RUNTIME_SEC, 30)
+    )
+    disconnect_default = max(5, min(DEFAULT_DISCONNECT_AFTER_SEC, app_runtime_sec - 5))
+    disconnect_after_sec = (
+        max(5, int(args.disconnect_after_sec))
+        if args.disconnect_after_sec is not None
+        else run_m0.env_int(
+            env,
+            "NETMIC_HARNESS_M3_DISCONNECT_AFTER_SEC",
+            disconnect_default,
+            5,
+        )
+    )
+    disconnect_after_sec = min(disconnect_after_sec, max(5, app_runtime_sec - 5))
     artifact_root_raw = env.get("NETMIC_HARNESS_ARTIFACT_DIR", ".harness/runs")
     artifact_root = Path(artifact_root_raw) if os.path.isabs(artifact_root_raw) else ROOT / artifact_root_raw
     run_dir = artifact_root / run_id

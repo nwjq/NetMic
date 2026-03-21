@@ -627,7 +627,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic top-level harness coordinator")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
     parser.add_argument("--until", choices=[spec.id for spec in WORKFLOW], default="M3")
-    parser.add_argument("--run-m0-duration", type=int, default=300)
+    parser.add_argument("--run-m0-duration", type=int, default=None)
     args = parser.parse_args()
 
     hosts_env = Path(args.hosts_env).expanduser().resolve()
@@ -731,7 +731,12 @@ def main() -> int:
 
         extra_args: List[str] = []
         if unfinished.id == "M0":
-            extra_args.extend(["--duration", str(max(1, args.run_m0_duration))])
+            m0_duration = (
+                max(1, int(args.run_m0_duration))
+                if args.run_m0_duration is not None
+                else run_m0.env_int(env, "NETMIC_HARNESS_M0_DURATION_SEC", 300, 1)
+            )
+            extra_args.extend(["--duration", str(m0_duration)])
         result = run_runner(unfinished, hosts_env, extra_args)
         runner_status = "pass" if result.returncode == 0 else ("blocked" if result.returncode == 2 else "fail")
         summary = (
