@@ -490,16 +490,45 @@ def run_runner(
     )
 
 
+def build_coordinator_manifest(
+    artifact_root: Path,
+    hosts_env: Path,
+    coordinator_run_id: str,
+    target: str,
+) -> Dict[str, object]:
+    return {
+        "run_id": coordinator_run_id,
+        "kind": "coordinator",
+        "target": target,
+        "hosts_env": str(hosts_env),
+        "artifact_root": str(artifact_root),
+        "repo": CURRENT_REPO_STATE,
+        "generated_at": now_iso(),
+    }
+
+
 def write_coordinator_report(
     artifact_root: Path,
+    hosts_env: Path,
     coordinator_run_id: str,
+    target: str,
     status: str,
     summary: str,
     steps: List[Dict[str, object]],
 ) -> Path:
     run_dir = artifact_root / coordinator_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_dir / "manifest.json"
     report_path = run_dir / "report.json"
+    write_json(
+        manifest_path,
+        build_coordinator_manifest(
+            artifact_root=artifact_root,
+            hosts_env=hosts_env,
+            coordinator_run_id=coordinator_run_id,
+            target=target,
+        ),
+    )
     write_json(
         report_path,
         {
@@ -674,7 +703,9 @@ def main() -> int:
 
     report_path = write_coordinator_report(
         artifact_root,
+        hosts_env,
         coordinator_run_id,
+        args.until,
         final_status,
         final_summary,
         steps,

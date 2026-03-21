@@ -244,24 +244,29 @@ esac
 
 sync_state="$(find "$sync_artifact_root" -path '*/sync/remote-sync.json' | head -n 1)"
 sync_log="$(find "$sync_artifact_root" -path '*/sync/remote-sync.log' | head -n 1)"
-if [[ -z "$sync_state" || -z "$sync_log" ]]; then
+sync_manifest="$(find "$sync_artifact_root" -path '*/manifest.json' | head -n 1)"
+if [[ -z "$sync_state" || -z "$sync_log" || -z "$sync_manifest" ]]; then
   echo "缺少 coordinator 远端同步产物" >&2
   exit 1
 fi
 
-python3 - "$sync_state" "$sync_log" <<'PY'
+python3 - "$sync_state" "$sync_log" "$sync_manifest" <<'PY'
 import json
 import sys
 
-state_path, log_path = sys.argv[1], sys.argv[2]
+state_path, log_path, manifest_path = sys.argv[1], sys.argv[2], sys.argv[3]
 state = json.load(open(state_path, "r", encoding="utf-8"))
 log_text = open(log_path, "r", encoding="utf-8").read()
+manifest = json.load(open(manifest_path, "r", encoding="utf-8"))
 
 assert state["status"] == "blocked", state
 assert "Operation not permitted" in state["summary"], state
 assert state["commands"][0]["returncode"] == 255, state
 assert "top-secret" not in json.dumps(state, ensure_ascii=False), state
 assert "Operation not permitted" in log_text, log_text
+assert manifest["kind"] == "coordinator", manifest
+assert manifest["target"] == "M3", manifest
+assert manifest["repo"]["head_commit"], manifest
 PY
 
 echo "[ok] coordinator.py 远端同步阻塞回归测试通过"

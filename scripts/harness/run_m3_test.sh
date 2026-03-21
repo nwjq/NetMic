@@ -20,23 +20,33 @@ event_log = tmpdir / "event-log.ndjson"
 ok_events = [
     {
         "ts_ms": 1000,
-        "snapshot": {"status": "streaming"},
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 500},
+        },
         "visible": {"status_label": "推流中"},
     },
     {
         "ts_ms": 2000,
-        "snapshot": {"status": "streaming"},
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 1500},
+        },
         "visible": {"status_label": "推流中"},
     },
     {
         "ts_ms": 3900,
-        "snapshot": {"status": "streaming"},
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 2900},
+        },
         "visible": {"status_label": "推流中"},
     },
 ]
 report = run_m3.analyze_refresh_window(ok_events, 0, len(ok_events) - 1, "streaming")
 assert report["ok"] is True, report
 assert report["max_gap_ms"] == 1900, report
+assert report["max_status_age_ms"] == 1000, report
 
 reconnect_report = run_m3.analyze_reconnect_visibility(
     {
@@ -56,7 +66,10 @@ assert reconnect_report["ok"] is True, reconnect_report
 unexpected_events = ok_events + [
     {
         "ts_ms": 4800,
-        "snapshot": {"status": "connecting"},
+        "snapshot": {
+            "status": "connecting",
+            "runtime": {"server_status_updated_ms": 0},
+        },
         "visible": {"status_label": "连接中"},
     },
 ]
@@ -72,18 +85,47 @@ assert report["unexpected_statuses"] == ["connecting"], report
 gap_events = [
     {
         "ts_ms": 1000,
-        "snapshot": {"status": "streaming"},
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 500},
+        },
         "visible": {"status_label": "推流中"},
     },
     {
         "ts_ms": 5005,
-        "snapshot": {"status": "streaming"},
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 4005},
+        },
         "visible": {"status_label": "推流中"},
     },
 ]
 report = run_m3.analyze_refresh_window(gap_events, 0, len(gap_events) - 1, "streaming")
 assert report["ok"] is False, report
 assert report["max_gap_ms"] == 4005, report
+assert report["stale_status_count"] == 0, report
+
+stale_events = [
+    {
+        "ts_ms": 1000,
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 0},
+        },
+        "visible": {"status_label": "推流中"},
+    },
+    {
+        "ts_ms": 2500,
+        "snapshot": {
+            "status": "streaming",
+            "runtime": {"server_status_updated_ms": 0},
+        },
+        "visible": {"status_label": "推流中"},
+    },
+]
+report = run_m3.analyze_refresh_window(stale_events, 0, len(stale_events) - 1, "streaming")
+assert report["ok"] is False, report
+assert report["missing_status_updated_count"] == 2, report
 
 event_log.write_text(
     "\n".join(
@@ -91,7 +133,10 @@ event_log.write_text(
             json.dumps(
                 {
                     "ts_ms": 1000,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
                 ensure_ascii=False,
@@ -100,7 +145,10 @@ event_log.write_text(
             json.dumps(
                 {
                     "ts_ms": 2500,
-                    "snapshot": {"status": "connecting"},
+                    "snapshot": {
+                        "status": "connecting",
+                        "runtime": {"server_status_updated_ms": 0},
+                    },
                     "visible": {"status_label": "连接中"},
                 },
                 ensure_ascii=False,
@@ -108,7 +156,10 @@ event_log.write_text(
             json.dumps(
                 {
                     "ts_ms": 4100,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 3100},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
                 ensure_ascii=False,
