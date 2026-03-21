@@ -499,7 +499,10 @@ def main() -> int:
     artifact_root_raw = env.get("NETMIC_HARNESS_ARTIFACT_DIR", ".harness/runs")
     artifact_root = Path(artifact_root_raw) if os.path.isabs(artifact_root_raw) else ROOT / artifact_root_raw
     run_dir = artifact_root / run_id
-    for path in (run_dir / "client", run_dir / "server", run_dir / "ui"):
+    client_dir = run_dir / "client"
+    server_dir = run_dir / "server"
+    ui_dir = run_dir / "ui"
+    for path in (client_dir, server_dir, ui_dir):
         run_m0.ensure_dir(path)
 
     manifest = build_manifest(env, hosts_env, run_id, run_dir, duration_sec)
