@@ -62,7 +62,7 @@
 - `reconnect_attempts: u32`
 - `mic_permission: String`（macOS 权限状态：已授权 / 未授权 / 不可用 / 未知 / 不适用）
 - `virtual_mic_name: String`
-- `server_status_updated_ms: u64`（服务端状态最后更新时间戳，毫秒）
+- `server_status_updated_ms: u64`（服务端可观察状态最后更新时间戳，毫秒；包括 Server 模式轮询结果，以及 Client 模式下握手/统计等来自服务端的真实响应）
 - `last_error: Option<String>`（最近一次错误原因，用于状态页明确提示）
 
 ### UiDevices

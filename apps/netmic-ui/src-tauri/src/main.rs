@@ -1355,12 +1355,7 @@ fn ensure_capture_loop(state: SharedState, app: AppHandle) {
                     let mut should_emit = false;
                     let mut timed_out = false;
                     if let Some(stats) = stats {
-                        apply_stats_to_metrics(&stats, &mut guard.snapshot.metrics);
-                        guard.last_server_seen_ms = Some(now);
-                        if guard.snapshot.status != "streaming" {
-                            guard.snapshot.status = "streaming".to_string();
-                            guard.snapshot.status_note = "推流中（服务端已响应）".to_string();
-                        }
+                        apply_client_stats_update(&mut guard, &stats, now);
                         should_emit = true;
                     }
 
@@ -1450,6 +1445,16 @@ fn apply_stats_to_metrics(stats: &StatsSnapshot, metrics: &mut UiMetrics) {
     metrics.audio_rms = stats.audio_rms;
     metrics.audio_peak = stats.audio_peak;
     metrics.uplink_kbps = 0.0;
+}
+
+fn apply_client_stats_update(state: &mut AppState, stats: &StatsSnapshot, observed_at_ms: u64) {
+    apply_stats_to_metrics(stats, &mut state.snapshot.metrics);
+    state.last_server_seen_ms = Some(observed_at_ms);
+    state.snapshot.runtime.server_status_updated_ms = observed_at_ms;
+    if state.snapshot.status != "streaming" {
+        state.snapshot.status = "streaming".to_string();
+        state.snapshot.status_note = "推流中（服务端已响应）".to_string();
+    }
 }
 
 fn build_handshake_request(config: &UiClientConfig) -> HandshakeRequest {
@@ -1772,6 +1777,7 @@ fn apply_handshake_outcome(
             state.snapshot.runtime.peer_addr = Some(server_addr.to_string());
             state.snapshot.runtime.reconnect_attempts = 0;
             state.snapshot.runtime.last_error = None;
+            state.snapshot.runtime.server_status_updated_ms = now_ms();
             state.pending_sender = None;
             state.last_server_seen_ms = None;
             state.push_log("info", "握手成功，已进入推流状态");
@@ -2340,6 +2346,33 @@ mod tests {
             state.snapshot.runtime.peer_addr,
             Some("127.0.0.1:43000".to_string())
         );
+        assert!(state.snapshot.runtime.server_status_updated_ms > 0);
+    }
+
+    #[test]
+    fn client_stats_update_refreshes_server_status_timestamp() {
+        let mut state = AppState::default();
+        state.snapshot.status = "connecting".to_string();
+        state.snapshot.status_note = "正在建立连接".to_string();
+        let stats = StatsSnapshot {
+            packets_received: 120,
+            packets_lost: 3,
+            buffer_depth_frames: 84,
+            buffer_depth_ms: 42,
+            jitter_buffer_depth_ms: 21.0,
+            estimated_e2e_latency_ms: 55.0,
+            audio_rms: 0.15,
+            audio_peak: 1234,
+        };
+
+        apply_client_stats_update(&mut state, &stats, 123_456);
+
+        assert_eq!(state.snapshot.status, "streaming");
+        assert_eq!(state.snapshot.status_note, "推流中（服务端已响应）");
+        assert_eq!(state.snapshot.runtime.server_status_updated_ms, 123_456);
+        assert_eq!(state.last_server_seen_ms, Some(123_456));
+        assert_eq!(state.snapshot.metrics.buffer_depth_ms, 42.0);
+        assert_eq!(state.snapshot.metrics.packet_loss_pct, 2.5);
     }
 
     #[test]
@@ -2420,8 +2453,14 @@ mod tests {
         let payload = fs::read_to_string(&log_path).expect("render log should exist");
         assert!(payload.contains("\"active_tab\":\"status\""), "{payload}");
         assert!(payload.contains("\"status_label\":\"推流中\""), "{payload}");
-        assert!(payload.contains("\"primary_action\":\"停止推流\""), "{payload}");
-        assert!(payload.contains("\"connection_lines\":[\"模式：Client\"]"), "{payload}");
+        assert!(
+            payload.contains("\"primary_action\":\"停止推流\""),
+            "{payload}"
+        );
+        assert!(
+            payload.contains("\"connection_lines\":[\"模式：Client\"]"),
+            "{payload}"
+        );
 
         let _ = fs::remove_file(&log_path);
         std::env::remove_var(ENV_HARNESS_RENDER_LOG);
