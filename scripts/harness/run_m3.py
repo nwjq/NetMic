@@ -38,6 +38,7 @@ STATUS_LABELS = {
     "streaming": "推流中",
     "error": "错误",
 }
+RECONNECT_NOTE_HINTS = ("重连", "未响应")
 PROCESS_STOP_TIMEOUT_SEC = 5
 
 
@@ -159,6 +160,42 @@ def analyze_refresh_window(
     }
 
 
+def analyze_reconnect_visibility(event: Dict[str, object]) -> Dict[str, object]:
+    snapshot = dict(event.get("snapshot") or {})
+    visible = dict(event.get("visible") or {})
+    snapshot_status = str(snapshot.get("status") or "")
+    snapshot_note = str(snapshot.get("status_note") or "")
+    visible_label = str(visible.get("status_label") or "")
+    visible_note = str(visible.get("status_note") or "")
+    reconnect_attempts = int(((snapshot.get("runtime") or {}).get("reconnect_attempts")) or 0)
+    expected_visible_label = STATUS_LABELS.get("connecting", "")
+    note_contains_hint = any(
+        hint in note
+        for note in (snapshot_note, visible_note)
+        for hint in RECONNECT_NOTE_HINTS
+    )
+    note_mismatch = bool(snapshot_note and visible_note and snapshot_note != visible_note)
+    return {
+        "ok": (
+            snapshot_status == "connecting"
+            and reconnect_attempts >= 1
+            and visible_label == expected_visible_label
+            and bool(snapshot_note)
+            and bool(visible_note)
+            and not note_mismatch
+            and note_contains_hint
+        ),
+        "snapshot_status": snapshot_status,
+        "snapshot_status_note": snapshot_note,
+        "visible_status_label": visible_label,
+        "visible_status_note": visible_note,
+        "expected_visible_label": expected_visible_label,
+        "reconnect_attempts": reconnect_attempts,
+        "note_contains_hint": note_contains_hint,
+        "note_mismatch": note_mismatch,
+    }
+
+
 def stop_ui_process(proc: subprocess.Popen[str]) -> bool:
     if proc.poll() is not None:
         return False
@@ -179,6 +216,7 @@ def evaluate_final_verdict(
     ui_ok: bool,
     stable_before_report: Dict[str, object],
     stable_after_report: Dict[str, object],
+    reconnect_visibility: Dict[str, object],
     app_runtime_sec: int,
     wall_runtime_sec: float,
     recovery_ms: int,
@@ -203,6 +241,15 @@ def evaluate_final_verdict(
             f"event_count={stable_after_report['event_count']}, "
             f"max_gap_ms={stable_after_report['max_gap_ms']}, "
             f"unexpected={stable_after_report['unexpected_statuses']}",
+        )
+
+    if not reconnect_visibility["ok"]:
+        return (
+            "fail",
+            "M3 断线提示不可见或不一致："
+            f"snapshot_note={reconnect_visibility['snapshot_status_note']!r}, "
+            f"visible_note={reconnect_visibility['visible_status_note']!r}, "
+            f"visible_label={reconnect_visibility['visible_status_label']!r}",
         )
 
     if wall_runtime_sec < float(app_runtime_sec):
@@ -711,6 +758,7 @@ def main() -> int:
     recovered_snapshot = select_snapshot(recovered_event or {})
     steady_snapshot = select_snapshot(steady_after_event or recovered_event or {})
     recovery_ms = int((recovered_event or {}).get("ts_ms") or 0) - int((reconnect_event or {}).get("ts_ms") or 0)
+    reconnect_visibility = analyze_reconnect_visibility(reconnect_event or {})
     stable_before_report = analyze_refresh_window(
         events,
         stream_index or 0,
@@ -736,6 +784,7 @@ def main() -> int:
         ui_ok=all(step.status == "pass" for step in ui_steps),
         stable_before_report=stable_before_report,
         stable_after_report=stable_after_report,
+        reconnect_visibility=reconnect_visibility,
         app_runtime_sec=app_runtime_sec,
         wall_runtime_sec=wall_runtime_sec,
         recovery_ms=recovery_ms,
@@ -768,6 +817,7 @@ def main() -> int:
             "recovery_ms": recovery_ms,
             "event_count": len(backend_events),
             "render_event_count": len(events),
+            "reconnect_visibility": reconnect_visibility,
             "app_runtime_sec": app_runtime_sec,
             "disconnect_after_sec": disconnect_after_sec,
             "post_recover_sec": post_recover_sec,

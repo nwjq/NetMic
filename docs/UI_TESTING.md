@@ -140,6 +140,7 @@ Harness 对 UI 的要求：
 
 - 长时间运行时 UI 持续刷新
 - 断线与恢复状态可见
+- 断线期间 render ack 必须出现可见的重连/过期提示；`snapshot.status_note` 与可见 `status_note` 需一致
 - 前端 render ack 持续产生，且时间窗口满足刷新要求；其中 `snapshot.status` 与可见状态标签必须一致
 - 实际 App 运行过程中，没有预期之外的可见 bug
 

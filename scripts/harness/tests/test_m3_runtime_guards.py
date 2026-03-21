@@ -48,6 +48,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
                 "recovery_ms": 1026,
                 "stable_before": {"ok": True},
                 "stable_after": {"ok": True},
+                "reconnect_visibility": {"ok": True},
             },
         }
         if wall_runtime_sec is not None:
@@ -94,6 +95,18 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
 
         self.assertIn("最近一次 run 为 blocked", note)
         self.assertIn("Operation not permitted", note)
+
+    def test_completion_note_requires_reconnect_visibility(self):
+        report = self.make_report(
+            started_at="2026-03-21T23:01:55+08:00",
+            finished_at="2026-03-22T00:02:16+08:00",
+            wall_runtime_sec=1802.5,
+        )
+        report["_recovery"]["reconnect_visibility"] = {"ok": False}
+
+        note = coordinator.report_completion_note(report, "M3")
+
+        self.assertIn("可见重连/过期提示", note)
 
 
 class CoordinatorRepoFreshnessTests(unittest.TestCase):
@@ -267,6 +280,7 @@ class RunM3VerdictTests(unittest.TestCase):
             ui_ok=True,
             stable_before_report=self.ok_window,
             stable_after_report=self.ok_window,
+            reconnect_visibility={"ok": True},
             app_runtime_sec=1800,
             wall_runtime_sec=21.0,
             recovery_ms=1026,
@@ -280,6 +294,7 @@ class RunM3VerdictTests(unittest.TestCase):
             ui_ok=True,
             stable_before_report=self.ok_window,
             stable_after_report=self.ok_window,
+            reconnect_visibility={"ok": True},
             app_runtime_sec=1800,
             wall_runtime_sec=1804.2,
             recovery_ms=1026,
@@ -287,6 +302,25 @@ class RunM3VerdictTests(unittest.TestCase):
         )
         self.assertEqual(status, "pass")
         self.assertIn("真实 netmic-ui 长测通过", summary)
+
+    def test_verdict_rejects_missing_reconnect_visibility(self):
+        status, summary = run_m3.evaluate_final_verdict(
+            ui_ok=True,
+            stable_before_report=self.ok_window,
+            stable_after_report=self.ok_window,
+            reconnect_visibility={
+                "ok": False,
+                "snapshot_status_note": "等待服务端重连",
+                "visible_status_note": "",
+                "visible_status_label": "连接中",
+            },
+            app_runtime_sec=1800,
+            wall_runtime_sec=1804.2,
+            recovery_ms=1026,
+            phase2_audio_dump=self.phase2_audio_dump,
+        )
+        self.assertEqual(status, "fail")
+        self.assertIn("断线提示不可见或不一致", summary)
 
 
 class RunM3ProcessCleanupTests(unittest.TestCase):
@@ -411,6 +445,42 @@ class RunM3RefreshWindowTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["expected_visible_label"], "推流中")
+
+    def test_reconnect_visibility_requires_matching_visible_note(self):
+        report = run_m3.analyze_reconnect_visibility(
+            {
+                "snapshot": {
+                    "status": "connecting",
+                    "status_note": "等待服务端重连",
+                    "runtime": {"reconnect_attempts": 1},
+                },
+                "visible": {
+                    "status_label": "连接中",
+                    "status_note": "",
+                },
+            }
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["note_mismatch"])
+
+    def test_reconnect_visibility_accepts_matching_reconnect_note(self):
+        report = run_m3.analyze_reconnect_visibility(
+            {
+                "snapshot": {
+                    "status": "connecting",
+                    "status_note": "等待服务端重连",
+                    "runtime": {"reconnect_attempts": 2},
+                },
+                "visible": {
+                    "status_label": "连接中",
+                    "status_note": "等待服务端重连",
+                },
+            }
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["note_contains_hint"])
 
 
 if __name__ == "__main__":

@@ -243,6 +243,7 @@ UI 对齐要求：
 补充口径：
 
 - `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
+- `M3` 旧产物还必须证明“断线期间前端 render ack 已显示可见的重连/过期提示”，至少要保证 reconnect 阶段的 `snapshot.status_note`、可见 `status_note` 与状态标签一致
 - 若最新 M3 产物只是调试短跑或缺少 wall-clock 证据，`coordinator_state.json` 应明确写出“不计 pass”的原因
 - coordinator 自身的远端同步预检同样会生成产物；若 `rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要
 

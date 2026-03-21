@@ -38,6 +38,21 @@ report = run_m3.analyze_refresh_window(ok_events, 0, len(ok_events) - 1, "stream
 assert report["ok"] is True, report
 assert report["max_gap_ms"] == 1900, report
 
+reconnect_report = run_m3.analyze_reconnect_visibility(
+    {
+        "snapshot": {
+            "status": "connecting",
+            "status_note": "等待服务端重连",
+            "runtime": {"reconnect_attempts": 1},
+        },
+        "visible": {
+            "status_label": "连接中",
+            "status_note": "等待服务端重连",
+        },
+    }
+)
+assert reconnect_report["ok"] is True, reconnect_report
+
 unexpected_events = ok_events + [
     {
         "ts_ms": 4800,

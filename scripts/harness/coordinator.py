@@ -223,6 +223,7 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
     wall_runtime_sec = extract_wall_runtime_sec(report, recovery)
     stable_before = recovery.get("stable_before", {})
     stable_after = recovery.get("stable_after", {})
+    reconnect_visibility = recovery.get("reconnect_visibility", {})
 
     return (
         app_runtime_sec >= M3_MIN_APP_RUNTIME_SEC
@@ -234,6 +235,8 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
         and bool(stable_before.get("ok"))
         and isinstance(stable_after, dict)
         and bool(stable_after.get("ok"))
+        and isinstance(reconnect_visibility, dict)
+        and bool(reconnect_visibility.get("ok"))
     )
 
 
@@ -272,6 +275,9 @@ def report_completion_note(report: Dict[str, object], milestone_id: str) -> Opti
     )
     stable_before = recovery.get("stable_before", {}) if isinstance(recovery, dict) else {}
     stable_after = recovery.get("stable_after", {}) if isinstance(recovery, dict) else {}
+    reconnect_visibility = (
+        recovery.get("reconnect_visibility", {}) if isinstance(recovery, dict) else {}
+    )
 
     if app_runtime_sec < M3_MIN_APP_RUNTIME_SEC:
         return (
@@ -291,6 +297,8 @@ def report_completion_note(report: Dict[str, object], milestone_id: str) -> Opti
         return "最近一次 run 虽报告 pass，但缺少断线前稳定刷新窗口"
     if not isinstance(stable_after, dict) or not stable_after.get("ok"):
         return "最近一次 run 虽报告 pass，但缺少恢复后稳定刷新窗口"
+    if not isinstance(reconnect_visibility, dict) or not reconnect_visibility.get("ok"):
+        return "最近一次 run 虽报告 pass，但缺少断线期间的可见重连/过期提示"
     if repo_note is not None:
         return repo_note
     return "最近一次 run 虽报告 pass，但未满足 coordinator 的 M3 通过条件"
