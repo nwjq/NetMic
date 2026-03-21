@@ -129,6 +129,17 @@ def classify_output(output: str) -> str:
     return "fail"
 
 
+def summarize_command_issue(output: str) -> str:
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("rsync ") or line.startswith("sending incremental file list"):
+            continue
+        return line
+    return ""
+
+
 def require_local_tools(password_auth: bool, needs_node: bool, needs_rsync: bool = False) -> Tuple[str, str]:
     missing: List[str] = []
     if shutil.which("ssh") is None:
@@ -233,16 +244,24 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     dry_run_result = run_command(build_rsync_command(env, local_root, dry_run=True))
     combined = "\n".join(part for part in (dry_run_result.stdout, dry_run_result.stderr) if part).strip()
     if dry_run_result.returncode != 0:
-        return (classify_output(combined), "远端工作区同步预检失败", [dry_run_result])
+        detail = summarize_command_issue(combined)
+        summary = "远端工作区同步预检失败"
+        if detail:
+            summary = f"{summary}：{detail}"
+        return (classify_output(combined), summary, [dry_run_result])
     if not combined:
         return ("pass", "远端工作区已与本地同步", [dry_run_result])
 
     apply_result = run_command(build_rsync_command(env, local_root, dry_run=False))
     combined = "\n".join(part for part in (apply_result.stdout, apply_result.stderr) if part).strip()
     if apply_result.returncode != 0:
+        detail = summarize_command_issue(combined)
+        summary = "远端工作区同步失败"
+        if detail:
+            summary = f"{summary}：{detail}"
         return (
             classify_output(combined),
-            "远端工作区同步失败",
+            summary,
             [dry_run_result, apply_result],
         )
     return (

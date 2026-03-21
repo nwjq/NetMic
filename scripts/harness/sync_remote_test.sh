@@ -96,6 +96,7 @@ PY
 
 run_case changes pass "已将本地工作区同步到远端" 2
 run_case clean pass "远端工作区已与本地同步" 1
-run_case blocked blocked "远端工作区同步预检失败" 1
+run_case blocked blocked "Operation not permitted" 1
+run_case apply-fail fail "rsync: write failed" 2
 
 echo "[ok] sync_remote helper 最小测试通过"

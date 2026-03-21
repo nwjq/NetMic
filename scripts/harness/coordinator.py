@@ -272,6 +272,39 @@ def write_coordinator_report(
     return report_path
 
 
+def write_sync_artifacts(
+    artifact_root: Path,
+    coordinator_run_id: str,
+    status: str,
+    summary: str,
+    results: List[run_m0.CommandResult],
+) -> List[str]:
+    run_dir = artifact_root / coordinator_run_id
+    sync_dir = run_dir / "sync"
+    log_path = sync_dir / "remote-sync.log"
+    state_path = sync_dir / "remote-sync.json"
+    titles = ["rsync-dry-run", "rsync-apply"]
+    for index, result in enumerate(results):
+        title = titles[index] if index < len(titles) else f"rsync-step-{index + 1}"
+        run_m0.append_section(log_path, title, result.stdout, result.stderr)
+    write_json(
+        state_path,
+        {
+            "status": status,
+            "summary": summary,
+            "commands": [
+                {
+                    "command": result.command,
+                    "returncode": result.returncode,
+                }
+                for result in results
+            ],
+            "updated_at": now_iso(),
+        },
+    )
+    return [display_path(log_path), display_path(state_path)]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetMic top-level harness coordinator")
     parser.add_argument("--hosts-env", default=str(DEFAULT_HOSTS_ENV))
@@ -286,6 +319,7 @@ def main() -> int:
 
     env = parse_env_file(hosts_env)
     artifact_root = artifact_root_from_env(env)
+    coordinator_run_id = datetime.now().astimezone().strftime("coordinator-%Y%m%dT%H%M%S")
     reports = load_run_reports(artifact_root)
     state = build_state(artifact_root, reports, args.until)
     write_json(STATE_PATH, state)
@@ -318,12 +352,20 @@ def main() -> int:
             final_status = prepare_status
             final_summary = prepare_summary
         else:
-            sync_status, sync_summary, _sync_logs = run_m0.sync_remote_workspace(env)
+            sync_status, sync_summary, sync_logs = run_m0.sync_remote_workspace(env)
+            artifacts = write_sync_artifacts(
+                artifact_root,
+                coordinator_run_id,
+                sync_status,
+                sync_summary,
+                sync_logs,
+            )
             steps.append(
                 {
                     "id": "sync-remote",
                     "status": sync_status,
                     "summary": sync_summary,
+                    "artifacts": artifacts,
                 }
             )
             if sync_status != "pass":
@@ -392,7 +434,6 @@ def main() -> int:
             break
         final_summary = f"{unfinished.id} 已通过，继续推进"
 
-    coordinator_run_id = datetime.now().astimezone().strftime("coordinator-%Y%m%dT%H%M%S")
     report_path = write_coordinator_report(
         artifact_root,
         coordinator_run_id,

@@ -230,6 +230,7 @@ UI 对齐要求：
 补充口径：
 
 - `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
+- coordinator 自身的远端同步预检同样会生成产物；若 `rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要
 
 当前已存在的专门 runner：
 
