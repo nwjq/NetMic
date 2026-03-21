@@ -31,13 +31,21 @@ DEFAULT_SERVER_PORT = 43000
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 UI_POLL_INTERVAL_MS = 1000
 DEFAULT_REMOTE_TIMEOUT_SEC = 120
-DEFAULT_SYNC_EXCLUDES = (
+SYNC_EXCLUDES = (
     ".git/",
     ".harness/hosts.env",
     ".harness/runs/",
     ".codex/",
     "target/",
     "node_modules/",
+)
+REPO_STATE_EXCLUDES = (
+    ".harness/hosts.env",
+    ".harness/runs/",
+    ".codex/",
+    "target/",
+    "node_modules/",
+    "AGENTS.md",
 )
 
 BLOCKED_PATTERNS = (
@@ -97,19 +105,27 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def should_exclude_sync_path(path_str: str) -> bool:
+def should_exclude_path(path_str: str, patterns: Tuple[str, ...]) -> bool:
     normalized = path_str.strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
     if not normalized:
         return True
-    for pattern in DEFAULT_SYNC_EXCLUDES:
+    for pattern in patterns:
         candidate = pattern.strip().replace("\\", "/").rstrip("/")
         if not candidate:
             continue
         if normalized == candidate or normalized.startswith(candidate + "/"):
             return True
     return False
+
+
+def should_exclude_sync_path(path_str: str) -> bool:
+    return should_exclude_path(path_str, SYNC_EXCLUDES)
+
+
+def should_exclude_repo_state_path(path_str: str) -> bool:
+    return should_exclude_path(path_str, REPO_STATE_EXCLUDES)
 
 
 def _hash_repo_path(relative_path: str) -> str:
@@ -153,7 +169,7 @@ def collect_repo_state() -> Dict[str, object]:
             continue
         path_parts = [part.strip() for part in raw_path.split(" -> ")] if " -> " in raw_path else [raw_path]
         relative_path = path_parts[-1]
-        if should_exclude_sync_path(relative_path):
+        if should_exclude_repo_state_path(relative_path):
             continue
         entry = {
             "path": relative_path,
@@ -361,7 +377,7 @@ def build_rsync_command(env: Dict[str, str], local_root: Path, dry_run: bool) ->
     command.extend(["rsync", "-az", "--delete", "--itemize-changes"])
     if dry_run:
         command.append("--dry-run")
-    for pattern in DEFAULT_SYNC_EXCLUDES:
+    for pattern in SYNC_EXCLUDES:
         command.extend(["--exclude", pattern])
     ssh_transport = " ".join(shlex.quote(part) for part in build_ssh_transport(env))
     command.extend(

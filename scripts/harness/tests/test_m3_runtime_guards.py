@@ -386,7 +386,10 @@ class RunM3RefreshWindowTests(unittest.TestCase):
             [
                 {
                     "ts_ms": 1000,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
                 {
@@ -408,12 +411,18 @@ class RunM3RefreshWindowTests(unittest.TestCase):
             [
                 {
                     "ts_ms": 1000,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
                 {
                     "ts_ms": 2000,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 1500},
+                    },
                     "visible": {"status_label": "连接中"},
                 },
             ],
@@ -430,12 +439,18 @@ class RunM3RefreshWindowTests(unittest.TestCase):
             [
                 {
                     "ts_ms": 1000,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
                 {
                     "ts_ms": 2500,
-                    "snapshot": {"status": "streaming"},
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 2000},
+                    },
                     "visible": {"status_label": "推流中"},
                 },
             ],
@@ -446,6 +461,62 @@ class RunM3RefreshWindowTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["expected_visible_label"], "推流中")
+
+    def test_refresh_window_rejects_missing_server_status_timestamp(self):
+        report = run_m3.analyze_refresh_window(
+            [
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
+                    "visible": {"status_label": "推流中"},
+                },
+                {
+                    "ts_ms": 2000,
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 0},
+                    },
+                    "visible": {"status_label": "推流中"},
+                },
+            ],
+            0,
+            1,
+            "streaming",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["missing_status_updated_count"], 1)
+
+    def test_refresh_window_rejects_stale_server_status(self):
+        report = run_m3.analyze_refresh_window(
+            [
+                {
+                    "ts_ms": 1000,
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 500},
+                    },
+                    "visible": {"status_label": "推流中"},
+                },
+                {
+                    "ts_ms": 4201,
+                    "snapshot": {
+                        "status": "streaming",
+                        "runtime": {"server_status_updated_ms": 1000},
+                    },
+                    "visible": {"status_label": "推流中"},
+                },
+            ],
+            0,
+            1,
+            "streaming",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["stale_status_count"], 1)
 
     def test_reconnect_visibility_requires_matching_visible_note(self):
         report = run_m3.analyze_reconnect_visibility(
@@ -547,6 +618,9 @@ class RunM3VisibleArtifactTests(unittest.TestCase):
         status_payload = json.loads((self.ui_dir / "steady" / "visible-status.json").read_text(encoding="utf-8"))
         self.assertEqual(status_payload["status_label"], "推流中")
         self.assertIn("Codec：opus", status_payload["params_lines"])
+        refresh_payload = json.loads((self.ui_dir / "steady" / "refresh-check.json").read_text(encoding="utf-8"))
+        self.assertTrue(refresh_payload["ok"])
+        self.assertEqual(refresh_payload["server_status_updated_ms"], 4500)
 
     def test_render_phase_snapshot_rejects_incomplete_visible_params(self):
         step = run_m3.render_phase_snapshot(
@@ -557,6 +631,16 @@ class RunM3VisibleArtifactTests(unittest.TestCase):
 
         self.assertEqual(step.status, "fail")
         self.assertIn("params_lines", step.summary)
+
+    def test_promote_phase_ui_artifacts_copies_standard_top_level_files(self):
+        run_m3.render_phase_snapshot(self.make_event(), self.ui_dir, "steady")
+
+        run_m3.promote_phase_ui_artifacts(self.ui_dir, "steady")
+
+        top_level_status = json.loads((self.ui_dir / "visible-status.json").read_text(encoding="utf-8"))
+        top_level_refresh = json.loads((self.ui_dir / "refresh-check.json").read_text(encoding="utf-8"))
+        self.assertEqual(top_level_status["status_label"], "推流中")
+        self.assertTrue(top_level_refresh["ok"])
 
 
 if __name__ == "__main__":

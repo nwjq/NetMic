@@ -172,8 +172,10 @@ Harness 运行前，默认已由上游文档确定：
 - 先保证“有统一产物”，再追求格式复杂度。
 - 所有 verdict 必须能追溯到对应 run 的产物。
 - `manifest.json` / `sync/remote-sync.json` 应记录本地源码快照（至少包含 `head_commit`、dirty 状态与变更指纹），以便 coordinator 判断旧 `pass` 是否已过期。
+- 源码快照只用于判定“当前验收是否仍对应同一份产品代码”；应排除 `.harness/hosts.env`、`.harness/runs/`、`.codex/`、`target/`、`node_modules/` 以及 `AGENTS.md` 这类本地现场或自动化噪音，避免无关改动让历史 `pass` 失效。
 - `M3` 的 `recovery.json` 不只用于 `pass`；即使在 `bootstrap-ui`、断线恢复、恢复后稳定窗口等阶段失败，也应写出当前阶段、已观测事件与 wall-clock 进度，避免失败后只剩摘要文字。
 - `M3` 的 phase UI 产物应直接来自真实 `netmic-ui` 的 render ack，而不是把 snapshot 离线重渲染后再当作“真实可见结果”。
+- `M3` 的长时刷新判定除 render ack 连续性外，还应确认 `server_status_updated_ms` 在稳定窗口内持续前进，避免前端只是反复重绘旧 snapshot。
 - 若当前里程碑暂未要求音频 dump，可先不生成 `audio_dump.pcm`，但必须补齐对应阶段的关键日志与状态文件。
 
 ## 7. 里程碑与 Harness 对齐

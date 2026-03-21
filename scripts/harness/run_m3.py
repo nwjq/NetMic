@@ -29,6 +29,7 @@ RECONNECT_TIMEOUT_SEC = 15
 RECOVER_TIMEOUT_SEC = 15
 RECOVERY_TARGET_MS = 10_000
 REFRESH_GAP_TARGET_MS = 3_000
+STATUS_UPDATE_STALE_MS = run_m0.UI_POLL_INTERVAL_MS * 2
 STABILITY_WAIT_PAD_SEC = 30
 STATUS_LABELS = {
     "idle": "空闲",
@@ -90,6 +91,38 @@ def event_visible_label(event: Dict[str, object]) -> str:
     return str((event.get("visible") or {}).get("status_label") or "")
 
 
+def event_status_updated_ms(event: Dict[str, object]) -> int:
+    runtime = ((event.get("snapshot") or {}).get("runtime") or {})
+    return int(runtime.get("server_status_updated_ms") or 0)
+
+
+def build_refresh_check(event: Dict[str, object]) -> Dict[str, object]:
+    rendered_at_ms = event_ts_ms(event)
+    status_updated_ms = event_status_updated_ms(event)
+    status_age_ms = (
+        max(0, rendered_at_ms - status_updated_ms)
+        if rendered_at_ms > 0 and status_updated_ms > 0
+        else None
+    )
+    snapshot_status = event_status(event)
+    freshness_required = snapshot_status == "streaming"
+    freshness_ok = not freshness_required or (
+        status_updated_ms > 0
+        and status_age_ms is not None
+        and status_age_ms <= STATUS_UPDATE_STALE_MS
+    )
+    return {
+        "ok": bool((event.get("visible") or {}).get("status_label")) and rendered_at_ms > 0 and freshness_ok,
+        "rendered_at_ms": rendered_at_ms,
+        "server_status_updated_ms": status_updated_ms,
+        "server_status_age_ms": status_age_ms,
+        "server_status_age_sec": (status_age_ms // 1000) if status_age_ms is not None else None,
+        "server_status_poll_ms": run_m0.UI_POLL_INTERVAL_MS,
+        "stale_threshold_ms": STATUS_UPDATE_STALE_MS,
+        "freshness_required": freshness_required,
+    }
+
+
 def wait_for_event_span(
     event_log: Path,
     start_index: int,
@@ -127,15 +160,30 @@ def analyze_refresh_window(
     timestamps = [event_ts_ms(event) for event in window if event_ts_ms(event) > 0]
     statuses = [event_status(event) for event in window if event_status(event)]
     visible_labels = [event_visible_label(event) for event in window if event_visible_label(event)]
+    status_updated_values = [
+        event_status_updated_ms(event)
+        for event in window
+        if event_status(event) == expected_status
+    ]
+    status_age_values = [
+        max(0, event_ts_ms(event) - event_status_updated_ms(event))
+        for event in window
+        if event_status(event) == expected_status
+        and event_ts_ms(event) > 0
+        and event_status_updated_ms(event) > 0
+    ]
     max_gap_ms = 0
     if len(timestamps) >= 2:
         max_gap_ms = max(
             later - earlier for earlier, later in zip(timestamps, timestamps[1:])
         )
+    max_status_age_ms = max(status_age_values) if status_age_values else 0
     unexpected_statuses = sorted({status for status in statuses if status != expected_status})
     expected_visible_label = STATUS_LABELS.get(expected_status, "")
     missing_status_count = sum(1 for event in window if not event_status(event))
     missing_visible_label_count = sum(1 for event in window if not event_visible_label(event))
+    missing_status_updated_count = sum(1 for value in status_updated_values if value <= 0)
+    stale_status_count = sum(1 for age in status_age_values if age > STATUS_UPDATE_STALE_MS)
     unexpected_visible_labels = sorted(
         {label for label in visible_labels if label != expected_visible_label}
     )
@@ -143,12 +191,15 @@ def analyze_refresh_window(
         "ok": len(timestamps) >= 2
         and not missing_status_count
         and not missing_visible_label_count
+        and not missing_status_updated_count
+        and not stale_status_count
         and not unexpected_statuses
         and not unexpected_visible_labels
         and max_gap_ms <= REFRESH_GAP_TARGET_MS,
         "event_count": len(window),
         "span_ms": (timestamps[-1] - timestamps[0]) if len(timestamps) >= 2 else 0,
         "max_gap_ms": max_gap_ms,
+        "max_status_age_ms": max_status_age_ms,
         "expected_status": expected_status,
         "expected_visible_label": expected_visible_label,
         "statuses": sorted(set(statuses)),
@@ -157,6 +208,9 @@ def analyze_refresh_window(
         "unexpected_visible_labels": unexpected_visible_labels,
         "missing_status_count": missing_status_count,
         "missing_visible_label_count": missing_visible_label_count,
+        "missing_status_updated_count": missing_status_updated_count,
+        "stale_status_count": stale_status_count,
+        "stale_threshold_ms": STATUS_UPDATE_STALE_MS,
     }
 
 
@@ -231,6 +285,7 @@ def evaluate_final_verdict(
             "M3 断线前长时刷新不达标："
             f"event_count={stable_before_report['event_count']}, "
             f"max_gap_ms={stable_before_report['max_gap_ms']}, "
+            f"max_status_age_ms={stable_before_report['max_status_age_ms']}, "
             f"unexpected={stable_before_report['unexpected_statuses']}",
         )
 
@@ -240,6 +295,7 @@ def evaluate_final_verdict(
             "M3 恢复后长时刷新不达标："
             f"event_count={stable_after_report['event_count']}, "
             f"max_gap_ms={stable_after_report['max_gap_ms']}, "
+            f"max_status_age_ms={stable_after_report['max_status_age_ms']}, "
             f"unexpected={stable_after_report['unexpected_statuses']}",
         )
 
@@ -391,23 +447,8 @@ def render_phase_snapshot(event: Dict[str, object], ui_dir: Path, phase: str) ->
             "lines": visible_lines(visible, "log_lines"),
         },
     )
-    rendered_at_ms = event_ts_ms(event)
-    status_updated_ms = int(((snapshot.get("runtime") or {}).get("server_status_updated_ms")) or 0)
-    status_age_sec = (
-        max(0, (rendered_at_ms - status_updated_ms) // 1000)
-        if rendered_at_ms > 0 and status_updated_ms > 0
-        else None
-    )
-    run_m0.write_json(
-        phase_dir / "refresh-check.json",
-        {
-            "ok": bool(visible.get("status_label")) and rendered_at_ms > 0,
-            "rendered_at_ms": rendered_at_ms,
-            "server_status_updated_ms": status_updated_ms,
-            "server_status_age_sec": status_age_sec,
-            "server_status_poll_ms": run_m0.UI_POLL_INTERVAL_MS,
-        },
-    )
+    refresh_check = build_refresh_check(event)
+    run_m0.write_json(phase_dir / "refresh-check.json", refresh_check)
 
     params_lines = visible_lines(visible, "params_lines")
     expected_params = [
@@ -508,6 +549,25 @@ def write_partial_recovery(
             reconnect_event.get("ts_ms") or 0
         )
     run_m0.write_json(run_dir / "recovery.json", payload)
+
+
+def promote_phase_ui_artifacts(ui_dir: Path, phase: str) -> None:
+    phase_dir = ui_dir / phase
+    artifact_names = (
+        "snapshot.json",
+        "visible-status.json",
+        "visible-config.json",
+        "visible-logs.json",
+        "refresh-check.json",
+    )
+    for name in artifact_names:
+        source = phase_dir / name
+        if not source.exists():
+            continue
+        target = ui_dir / name
+        if target.exists():
+            target.unlink()
+        shutil.copy2(source, target)
 
 
 def main() -> int:
@@ -995,8 +1055,8 @@ def main() -> int:
 
     fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
     if phase2_started:
-        fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
         run_m1.remote_stop_server(env, remote_phase2)
+        fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
 
     backend_events = load_events(event_log_path)
     events = load_events(render_log_path)
@@ -1016,7 +1076,7 @@ def main() -> int:
     )
 
     ui_steps = [
-        render_phase_snapshot(stream_event or {}, ui_dir, "before"),
+        render_phase_snapshot(stable_before_event or stream_event or {}, ui_dir, "before"),
         render_phase_snapshot(reconnect_event or {}, ui_dir, "reconnecting"),
         render_phase_snapshot(recovered_event or {}, ui_dir, "recovered"),
         render_phase_snapshot(steady_after_event or recovered_event or {}, ui_dir, "steady"),
@@ -1070,10 +1130,10 @@ def main() -> int:
             "stable_after": stable_after_report,
         },
     )
-    if (ui_dir / "recovered").exists():
-        if (ui_dir / "snapshot.json").exists():
-            (ui_dir / "snapshot.json").unlink()
-        shutil.copy2(ui_dir / "recovered" / "snapshot.json", ui_dir / "snapshot.json")
+    if (ui_dir / "steady").exists():
+        promote_phase_ui_artifacts(ui_dir, "steady")
+    elif (ui_dir / "recovered").exists():
+        promote_phase_ui_artifacts(ui_dir, "recovered")
 
     run_m0.write_json(
         run_dir / "report.json",
