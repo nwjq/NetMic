@@ -337,14 +337,131 @@ def select_snapshot(event: Dict[str, object]) -> Dict[str, object]:
     return dict(event.get("snapshot") or {})
 
 
-def render_phase_snapshot(snapshot: Dict[str, object], ui_dir: Path, phase: str) -> run_m0.StepResult:
+def visible_lines(visible: Dict[str, object], key: str) -> List[str]:
+    value = visible.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def render_phase_snapshot(event: Dict[str, object], ui_dir: Path, phase: str) -> run_m0.StepResult:
     phase_dir = ui_dir / phase
-    return run_m0.run_ui_verify(
-        snapshot,
-        phase_dir,
-        step_id=f"ui-verify-{phase}",
-        success_summary=f"M3 {phase} 阶段 UI 可见产物已生成",
-        failure_summary=f"M3 {phase} 阶段 UI 产物生成失败",
+    snapshot = select_snapshot(event)
+    visible = dict(event.get("visible") or {})
+    if not snapshot or not visible:
+        return run_m0.StepResult(
+            f"ui-verify-{phase}",
+            "fail",
+            f"M3 {phase} 阶段缺少真实 render ack",
+        )
+
+    run_m0.ensure_dir(phase_dir)
+    run_m0.write_json(phase_dir / "snapshot.json", snapshot)
+    run_m0.write_json(
+        phase_dir / "visible-status.json",
+        {
+            "status_label": str(visible.get("status_label") or ""),
+            "status_note": str(visible.get("status_note") or ""),
+            "primary_action": str(visible.get("primary_action") or ""),
+            "connection_lines": visible_lines(visible, "connection_lines"),
+            "metrics_lines": visible_lines(visible, "metrics_lines"),
+            "audio_lines": visible_lines(visible, "audio_lines"),
+            "params_lines": visible_lines(visible, "params_lines"),
+            "events_lines": visible_lines(visible, "events_lines"),
+            "effective_values": snapshot.get("effective") or {},
+        },
+    )
+    run_m0.write_json(
+        phase_dir / "visible-config.json",
+        {
+            "connection_lines": visible_lines(visible, "config_connection_lines"),
+            "audio_lines": visible_lines(visible, "config_audio_lines"),
+            "client_lines": visible_lines(visible, "config_client_lines"),
+            "server_lines": visible_lines(visible, "config_server_lines"),
+            "fallback_lines": visible_lines(visible, "fallback_lines"),
+            "client_config_values": snapshot.get("client_config") or {},
+            "server_config_values": snapshot.get("server_config") or {},
+            "fallback_items": snapshot.get("fallbacks") or [],
+        },
+    )
+    run_m0.write_json(
+        phase_dir / "visible-logs.json",
+        {
+            "filter": str(visible.get("log_filter") or "all"),
+            "lines": visible_lines(visible, "log_lines"),
+        },
+    )
+    rendered_at_ms = event_ts_ms(event)
+    status_updated_ms = int(((snapshot.get("runtime") or {}).get("server_status_updated_ms")) or 0)
+    status_age_sec = (
+        max(0, (rendered_at_ms - status_updated_ms) // 1000)
+        if rendered_at_ms > 0 and status_updated_ms > 0
+        else None
+    )
+    run_m0.write_json(
+        phase_dir / "refresh-check.json",
+        {
+            "ok": bool(visible.get("status_label")) and rendered_at_ms > 0,
+            "rendered_at_ms": rendered_at_ms,
+            "server_status_updated_ms": status_updated_ms,
+            "server_status_age_sec": status_age_sec,
+            "server_status_poll_ms": run_m0.UI_POLL_INTERVAL_MS,
+        },
+    )
+
+    params_lines = visible_lines(visible, "params_lines")
+    expected_params = [
+        f"Codec：{snapshot.get('effective', {}).get('codec', '')}",
+        f"采样率：{snapshot.get('effective', {}).get('sample_rate_hz', '')} Hz",
+        f"声道：{snapshot.get('effective', {}).get('channels', '')}",
+        f"Chunk：{snapshot.get('effective', {}).get('chunk_ms', '')} ms",
+        f"Opus Bitrate：{snapshot.get('effective', {}).get('opus_bitrate_kbps') if (snapshot.get('effective', {}) or {}).get('opus_bitrate_kbps') is not None else '--'}",
+        f"Buffer：{snapshot.get('effective', {}).get('jitter_buffer_ms', '')} ms",
+    ]
+    missing_param_lines = [line for line in expected_params if line not in params_lines]
+    config_lines = visible_lines(visible, "config_client_lines") + visible_lines(
+        visible, "config_server_lines"
+    )
+    issues: List[str] = []
+    if not str(visible.get("status_label") or "").strip():
+        issues.append("缺少 status_label")
+    if not str(visible.get("status_note") or "").strip():
+        issues.append("缺少 status_note")
+    if not visible_lines(visible, "connection_lines"):
+        issues.append("缺少 connection_lines")
+    if missing_param_lines:
+        issues.append("params_lines 未覆盖全部生效参数")
+    if not visible_lines(visible, "events_lines"):
+        issues.append("缺少 events_lines")
+    if not config_lines:
+        issues.append("缺少配置可见内容")
+    if not visible_lines(visible, "log_lines"):
+        issues.append("缺少日志可见内容")
+    if issues:
+        return run_m0.StepResult(
+            f"ui-verify-{phase}",
+            "fail",
+            f"M3 {phase} 阶段真实 render ack 不完整：{issues[0]}",
+            [
+                run_m0.relative_artifact(phase_dir / "snapshot.json"),
+                run_m0.relative_artifact(phase_dir / "visible-status.json"),
+                run_m0.relative_artifact(phase_dir / "visible-config.json"),
+                run_m0.relative_artifact(phase_dir / "visible-logs.json"),
+                run_m0.relative_artifact(phase_dir / "refresh-check.json"),
+            ],
+        )
+
+    return run_m0.StepResult(
+        f"ui-verify-{phase}",
+        "pass",
+        f"M3 {phase} 阶段真实 render ack 产物已生成",
+        [
+            run_m0.relative_artifact(phase_dir / "snapshot.json"),
+            run_m0.relative_artifact(phase_dir / "visible-status.json"),
+            run_m0.relative_artifact(phase_dir / "visible-config.json"),
+            run_m0.relative_artifact(phase_dir / "visible-logs.json"),
+            run_m0.relative_artifact(phase_dir / "refresh-check.json"),
+        ],
     )
 
 
@@ -883,10 +1000,6 @@ def main() -> int:
 
     backend_events = load_events(event_log_path)
     events = load_events(render_log_path)
-    before_snapshot = select_snapshot(stream_event or {})
-    reconnect_snapshot = select_snapshot(reconnect_event or {})
-    recovered_snapshot = select_snapshot(recovered_event or {})
-    steady_snapshot = select_snapshot(steady_after_event or recovered_event or {})
     recovery_ms = int((recovered_event or {}).get("ts_ms") or 0) - int((reconnect_event or {}).get("ts_ms") or 0)
     reconnect_visibility = analyze_reconnect_visibility(reconnect_event or {})
     stable_before_report = analyze_refresh_window(
@@ -903,10 +1016,10 @@ def main() -> int:
     )
 
     ui_steps = [
-        render_phase_snapshot(before_snapshot, ui_dir, "before"),
-        render_phase_snapshot(reconnect_snapshot, ui_dir, "reconnecting"),
-        render_phase_snapshot(recovered_snapshot, ui_dir, "recovered"),
-        render_phase_snapshot(steady_snapshot, ui_dir, "steady"),
+        render_phase_snapshot(stream_event or {}, ui_dir, "before"),
+        render_phase_snapshot(reconnect_event or {}, ui_dir, "reconnecting"),
+        render_phase_snapshot(recovered_event or {}, ui_dir, "recovered"),
+        render_phase_snapshot(steady_after_event or recovered_event or {}, ui_dir, "steady"),
     ]
     for step in ui_steps:
         steps.append(step)

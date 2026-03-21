@@ -299,6 +299,19 @@ struct HarnessVisibleState {
     active_tab: String,
     status_label: String,
     status_note: String,
+    primary_action: String,
+    connection_lines: Vec<String>,
+    metrics_lines: Vec<String>,
+    audio_lines: Vec<String>,
+    params_lines: Vec<String>,
+    events_lines: Vec<String>,
+    config_connection_lines: Vec<String>,
+    config_audio_lines: Vec<String>,
+    config_client_lines: Vec<String>,
+    config_server_lines: Vec<String>,
+    fallback_lines: Vec<String>,
+    log_filter: String,
+    log_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2386,6 +2399,19 @@ mod tests {
                 active_tab: "status".to_string(),
                 status_label: "推流中".to_string(),
                 status_note: "推流中（握手成功）".to_string(),
+                primary_action: "停止推流".to_string(),
+                connection_lines: vec!["模式：Client".to_string()],
+                metrics_lines: vec!["RTT".to_string(), "4.0 ms".to_string()],
+                audio_lines: vec!["时域波形".to_string()],
+                params_lines: vec!["Codec：opus".to_string()],
+                events_lines: vec!["[INFO] 准备就绪".to_string()],
+                config_connection_lines: vec!["Server IP".to_string()],
+                config_audio_lines: vec!["音频参数".to_string()],
+                config_client_lines: vec!["输入设备".to_string()],
+                config_server_lines: vec![],
+                fallback_lines: vec!["暂无回退记录".to_string()],
+                log_filter: "all".to_string(),
+                log_lines: vec!["INFO 准备就绪".to_string()],
             },
         };
 
@@ -2394,6 +2420,8 @@ mod tests {
         let payload = fs::read_to_string(&log_path).expect("render log should exist");
         assert!(payload.contains("\"active_tab\":\"status\""), "{payload}");
         assert!(payload.contains("\"status_label\":\"推流中\""), "{payload}");
+        assert!(payload.contains("\"primary_action\":\"停止推流\""), "{payload}");
+        assert!(payload.contains("\"connection_lines\":[\"模式：Client\"]"), "{payload}");
 
         let _ = fs::remove_file(&log_path);
         std::env::remove_var(ENV_HARNESS_RENDER_LOG);

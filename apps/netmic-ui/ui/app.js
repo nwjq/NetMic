@@ -288,10 +288,36 @@ const scheduleAfterRender = (callback) => {
   window.setTimeout(callback, 0);
 };
 
+const htmlToLines = (html) =>
+  String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h3|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
 const collectHarnessVisibleState = () => ({
   active_tab: currentTab,
   status_label: elements.statusLabel.textContent || "",
   status_note: elements.statusNote.textContent || "",
+  primary_action: elements.primaryAction.textContent || "",
+  connection_lines: htmlToLines(elements.statusConnection.innerHTML),
+  metrics_lines: htmlToLines(elements.statusMetrics.innerHTML),
+  audio_lines: htmlToLines(elements.statusAudio.innerHTML),
+  params_lines: htmlToLines(elements.statusParams.innerHTML),
+  events_lines: htmlToLines(elements.statusEvents.innerHTML),
+  config_connection_lines: htmlToLines(elements.configConnection.innerHTML),
+  config_audio_lines: htmlToLines(elements.configAudio.innerHTML),
+  config_client_lines: htmlToLines(elements.configClient.innerHTML),
+  config_server_lines: htmlToLines(elements.configServer.innerHTML),
+  fallback_lines: htmlToLines(elements.configFallbacks.innerHTML),
+  log_filter: elements.logFilter.value || "all",
+  log_lines: htmlToLines(elements.logList.innerHTML),
 });
 
 const reportHarnessRender = () => {

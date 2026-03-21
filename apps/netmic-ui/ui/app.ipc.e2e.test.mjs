@@ -148,4 +148,9 @@ test("ipc adapter calls invoke and updates UI from snapshot", async () => {
     .filter((call) => call.command === "report_harness_render")
     .at(-1);
   assert.equal(renderAck.args.ack.visible.status_note, "来自 IPC 事件");
+  assert.ok(renderAck.args.ack.visible.connection_lines.length > 0);
+  assert.ok(
+    renderAck.args.ack.visible.params_lines.some((line) => line.startsWith("Codec："))
+  );
+  assert.ok(renderAck.args.ack.visible.log_lines.length > 0);
 });

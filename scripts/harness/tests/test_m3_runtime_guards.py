@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import tempfile
@@ -481,6 +482,81 @@ class RunM3RefreshWindowTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertTrue(report["note_contains_hint"])
+
+
+class RunM3VisibleArtifactTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.ui_dir = Path(self.tmpdir.name) / "ui"
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def make_event(self, *, params_lines=None):
+        return {
+            "ts_ms": 5000,
+            "snapshot": {
+                "mode": "client",
+                "status": "streaming",
+                "status_note": "推流中（握手成功）",
+                "effective": {
+                    "codec": "opus",
+                    "sample_rate_hz": 48000,
+                    "channels": 1,
+                    "chunk_ms": 20,
+                    "opus_bitrate_kbps": 48,
+                    "jitter_buffer_ms": 100,
+                },
+                "client_config": {"input_device": "系统默认"},
+                "server_config": {"listen_port": 43000},
+                "fallbacks": [],
+                "runtime": {"server_status_updated_ms": 4500},
+            },
+            "visible": {
+                "status_label": "推流中",
+                "status_note": "推流中（握手成功）",
+                "primary_action": "停止推流",
+                "connection_lines": ["模式：Client", "状态：推流中"],
+                "metrics_lines": ["RTT", "4.0 ms"],
+                "audio_lines": ["时域波形"],
+                "params_lines": params_lines
+                if params_lines is not None
+                else [
+                    "Codec：opus",
+                    "采样率：48000 Hz",
+                    "声道：1",
+                    "Chunk：20 ms",
+                    "Opus Bitrate：48",
+                    "Buffer：100 ms",
+                ],
+                "events_lines": ["[INFO] 准备就绪"],
+                "config_connection_lines": ["Server IP"],
+                "config_audio_lines": ["音频参数"],
+                "config_client_lines": ["输入设备", "麦克风权限：granted"],
+                "config_server_lines": [],
+                "fallback_lines": ["暂无回退记录"],
+                "log_filter": "all",
+                "log_lines": ["INFO 准备就绪"],
+            },
+        }
+
+    def test_render_phase_snapshot_writes_real_render_ack_artifacts(self):
+        step = run_m3.render_phase_snapshot(self.make_event(), self.ui_dir, "steady")
+
+        self.assertEqual(step.status, "pass")
+        status_payload = json.loads((self.ui_dir / "steady" / "visible-status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status_payload["status_label"], "推流中")
+        self.assertIn("Codec：opus", status_payload["params_lines"])
+
+    def test_render_phase_snapshot_rejects_incomplete_visible_params(self):
+        step = run_m3.render_phase_snapshot(
+            self.make_event(params_lines=["Codec：opus"]),
+            self.ui_dir,
+            "steady",
+        )
+
+        self.assertEqual(step.status, "fail")
+        self.assertIn("params_lines", step.summary)
 
 
 if __name__ == "__main__":
