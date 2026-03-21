@@ -29,6 +29,19 @@ DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 STATE_PATH = ROOT / ".harness" / "coordinator_state.json"
 M3_MIN_APP_RUNTIME_SEC = 30 * 60
 M3_MAX_RECOVERY_MS = 10_000
+M3_REQUIRED_ARTIFACTS: Tuple[Tuple[str, bool], ...] = (
+    ("ui/snapshot.json", True),
+    ("ui/visible-status.json", True),
+    ("ui/visible-config.json", True),
+    ("ui/visible-logs.json", True),
+    ("ui/refresh-check.json", True),
+    ("ui/event-log.ndjson", True),
+    ("ui/render-log.ndjson", True),
+    ("server/phase1/runtime.log", True),
+    ("server/phase1/audio_dump.pcm", True),
+    ("server/phase2/runtime.log", True),
+    ("server/phase2/audio_dump.pcm", True),
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +146,14 @@ def summarize_changed_paths(paths: object) -> str:
     return "：" + "、".join(preview) + suffix
 
 
+def summarize_artifact_paths(paths: List[str]) -> str:
+    if not paths:
+        return ""
+    preview = paths[:3]
+    suffix = "" if len(paths) <= 3 else f" 等 {len(paths)} 项"
+    return "：" + "、".join(preview) + suffix
+
+
 def normalize_repo_state(repo: object) -> Optional[Dict[str, object]]:
     if not isinstance(repo, dict):
         return None
@@ -209,6 +230,9 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
     if milestone_id != "M3":
         return True
 
+    if m3_artifact_note(report) is not None:
+        return False
+
     manifest = report.get("_manifest", {})
     recovery = report.get("_recovery", {})
     if not isinstance(manifest, dict) or not isinstance(recovery, dict):
@@ -243,10 +267,13 @@ def report_counts_as_pass(report: Dict[str, object], milestone_id: str) -> bool:
 def report_completion_note(report: Dict[str, object], milestone_id: str) -> Optional[str]:
     base_pass = report_counts_as_pass(report, milestone_id)
     repo_note = None
+    artifact_note = None
     if report.get("status") == "pass":
         repo_note = report_repo_mismatch_note(report, CURRENT_REPO_STATE)
+        if milestone_id == "M3":
+            artifact_note = m3_artifact_note(report)
 
-    if base_pass and repo_note is None:
+    if base_pass and repo_note is None and artifact_note is None:
         return None
 
     status = str(report.get("status") or "")
@@ -299,9 +326,34 @@ def report_completion_note(report: Dict[str, object], milestone_id: str) -> Opti
         return "最近一次 run 虽报告 pass，但缺少恢复后稳定刷新窗口"
     if not isinstance(reconnect_visibility, dict) or not reconnect_visibility.get("ok"):
         return "最近一次 run 虽报告 pass，但缺少断线期间的可见重连/过期提示"
+    if artifact_note is not None:
+        return artifact_note
     if repo_note is not None:
         return repo_note
     return "最近一次 run 虽报告 pass，但未满足 coordinator 的 M3 通过条件"
+
+
+def m3_artifact_note(report: Dict[str, object]) -> Optional[str]:
+    report_path_raw = report.get("_report_path")
+    if not isinstance(report_path_raw, str) or not report_path_raw.strip():
+        return "最近一次 run 虽报告 pass，但缺少 report 路径，无法确认 M3 产物"
+
+    run_dir = Path(report_path_raw).expanduser().resolve().parent
+    missing: List[str] = []
+    empty: List[str] = []
+    for rel_path, must_be_nonempty in M3_REQUIRED_ARTIFACTS:
+        artifact_path = run_dir / rel_path
+        if not artifact_path.exists():
+            missing.append(rel_path)
+            continue
+        if must_be_nonempty and artifact_path.stat().st_size <= 0:
+            empty.append(rel_path)
+
+    if missing:
+        return "最近一次 run 虽报告 pass，但缺少 M3 必需产物" + summarize_artifact_paths(missing)
+    if empty:
+        return "最近一次 run 虽报告 pass，但关键产物为空" + summarize_artifact_paths(empty)
+    return None
 
 
 def parse_iso_datetime(value: object) -> Optional[datetime]:

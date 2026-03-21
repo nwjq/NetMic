@@ -335,17 +335,62 @@ def evaluate_final_verdict(
     )
 
 
-def fetch_remote_artifacts(env: Dict[str, str], remote_dir: str, server_dir: Path) -> None:
+def fetch_remote_artifacts(
+    env: Dict[str, str],
+    remote_dir: str,
+    server_dir: Path,
+    phase_label: str,
+) -> run_m0.StepResult:
     run_m0.ensure_dir(server_dir)
     runtime = run_m1.remote_fetch_text(env, f"{remote_dir}/runtime.log")
-    run_m0.write_text(server_dir / "runtime.log", runtime.stdout or "")
+    runtime_log_path = server_dir / "runtime.log"
+    run_m0.write_text(runtime_log_path, runtime.stdout or "")
+    if runtime.returncode != 0:
+        output = "\n".join(part for part in (runtime.stdout, runtime.stderr) if part).strip()
+        verdict = run_m0.classify_output(output)
+        summary = run_m0.build_command_failure_summary(
+            f"回收远端 {phase_label} runtime.log 失败",
+            output,
+        )
+        return run_m0.StepResult(
+            f"collect-{phase_label}",
+            verdict,
+            summary,
+            [run_m0.relative_artifact(runtime_log_path)],
+        )
 
     audio_dump_path = server_dir / "audio_dump.pcm"
     audio_dump = run_m1.remote_fetch_binary_base64(env, f"{remote_dir}/audio_dump.pcm")
     if audio_dump.returncode == 0 and (audio_dump.stdout or "").strip():
         audio_dump_path.write_bytes(base64.b64decode(audio_dump.stdout.encode("ascii")))
+    elif audio_dump.returncode != 0:
+        audio_dump_path.write_bytes(b"")
+        output = "\n".join(part for part in (audio_dump.stdout, audio_dump.stderr) if part).strip()
+        verdict = run_m0.classify_output(output)
+        summary = run_m0.build_command_failure_summary(
+            f"回收远端 {phase_label} audio dump 失败",
+            output,
+        )
+        return run_m0.StepResult(
+            f"collect-{phase_label}",
+            verdict,
+            summary,
+            [
+                run_m0.relative_artifact(runtime_log_path),
+                run_m0.relative_artifact(audio_dump_path),
+            ],
+        )
     else:
         audio_dump_path.write_bytes(b"")
+    return run_m0.StepResult(
+        f"collect-{phase_label}",
+        "pass",
+        f"已回收远端 {phase_label} 产物",
+        [
+            run_m0.relative_artifact(runtime_log_path),
+            run_m0.relative_artifact(audio_dump_path),
+        ],
+    )
 
 
 def build_manifest(
@@ -767,7 +812,7 @@ def main() -> int:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase1)
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
             summary = "真实 netmic-ui 未在窗口内完成前端 streaming 渲染"
             steps.append(run_m0.StepResult("bootstrap-ui", "fail", summary, [run_m0.relative_artifact(client_runtime_log), run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
             write_partial_recovery(
@@ -820,7 +865,7 @@ def main() -> int:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase1)
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
             summary = f"真实 netmic-ui 未达到断线前稳定运行窗口：{disconnect_after_sec}s"
             steps.append(
                 run_m0.StepResult(
@@ -884,7 +929,7 @@ def main() -> int:
         if reconnect_event is None:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
             summary = "真实 netmic-ui 未在断线后渲染 reconnecting/connecting"
             steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
             write_partial_recovery(
@@ -919,7 +964,7 @@ def main() -> int:
         if server_restart.returncode != 0:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
             output = "\n".join(part for part in (server_restart.stdout, server_restart.stderr) if part).strip()
             verdict = run_m0.classify_output(output)
             summary = run_m0.build_command_failure_summary("远端服务端 phase2 重启失败", output)
@@ -963,8 +1008,8 @@ def main() -> int:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase2)
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
-            fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
+            steps.append(fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2", "phase2"))
             summary = "真实 netmic-ui 未在恢复窗口内重新渲染 streaming"
             steps.append(run_m0.StepResult("disconnect-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
             write_partial_recovery(
@@ -1007,8 +1052,8 @@ def main() -> int:
             stop_ui_process(proc)
             wall_runtime_sec = time.monotonic() - app_wall_start
             run_m1.remote_stop_server(env, remote_phase2)
-            fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
-            fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
+            steps.append(fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1"))
+            steps.append(fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2", "phase2"))
             summary = f"真实 netmic-ui 未达到恢复后稳定运行窗口：{post_recover_sec}s"
             steps.append(run_m0.StepResult("steady-after-recover", "fail", summary, [run_m0.relative_artifact(event_log_path), run_m0.relative_artifact(render_log_path)]))
             write_partial_recovery(
@@ -1053,10 +1098,13 @@ def main() -> int:
         stop_ui_process(proc)
         wall_runtime_sec = time.monotonic() - app_wall_start
 
-    fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1")
+    phase1_fetch_step = fetch_remote_artifacts(env, remote_phase1, server_dir / "phase1", "phase1")
+    steps.append(phase1_fetch_step)
+    phase2_fetch_step: Optional[run_m0.StepResult] = None
     if phase2_started:
         run_m1.remote_stop_server(env, remote_phase2)
-        fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2")
+        phase2_fetch_step = fetch_remote_artifacts(env, remote_phase2, server_dir / "phase2", "phase2")
+        steps.append(phase2_fetch_step)
 
     backend_events = load_events(event_log_path)
     events = load_events(render_log_path)
@@ -1093,6 +1141,17 @@ def main() -> int:
         recovery_ms=recovery_ms,
         phase2_audio_dump=server_dir / "phase2" / "audio_dump.pcm",
     )
+    fetch_failure = next(
+        (
+            step
+            for step in (phase1_fetch_step, phase2_fetch_step)
+            if step is not None and step.status != "pass"
+        ),
+        None,
+    )
+    if fetch_failure is not None and final_status == "pass":
+        final_status = fetch_failure.status
+        summary = fetch_failure.summary
 
     steps.append(
         run_m0.StepResult(

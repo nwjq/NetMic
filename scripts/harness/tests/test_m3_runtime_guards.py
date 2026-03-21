@@ -16,6 +16,9 @@ import run_m3  # noqa: E402
 
 class CoordinatorM3PassCriteriaTests(unittest.TestCase):
     def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self.tmpdir.name) / "m3-pass"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         self.original_repo_state = coordinator.CURRENT_REPO_STATE
         coordinator.CURRENT_REPO_STATE = {
             "head_commit": "current-head",
@@ -24,15 +27,26 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
             "fingerprint": None,
             "changed_paths": [],
         }
+        for rel_path, _ in coordinator.M3_REQUIRED_ARTIFACTS:
+            path = self.run_dir / rel_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.suffix == ".pcm":
+                path.write_bytes(b"\x00\x01")
+            elif path.suffix == ".ndjson":
+                path.write_text("{\"ok\":true}\n", encoding="utf-8")
+            else:
+                path.write_text("{\"ok\":true}\n", encoding="utf-8")
 
     def tearDown(self):
         coordinator.CURRENT_REPO_STATE = self.original_repo_state
+        self.tmpdir.cleanup()
 
     def make_report(self, *, started_at: str, finished_at: str, wall_runtime_sec=None):
         report = {
             "status": "pass",
             "started_at": started_at,
             "finished_at": finished_at,
+            "_report_path": str(self.run_dir / "report.json"),
             "_manifest": {
                 "milestone": "M3",
                 "runtime": {
@@ -108,6 +122,18 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         note = coordinator.report_completion_note(report, "M3")
 
         self.assertIn("可见重连/过期提示", note)
+
+    def test_missing_required_artifact_does_not_count_as_pass(self):
+        report = self.make_report(
+            started_at="2026-03-21T23:01:55+08:00",
+            finished_at="2026-03-22T00:02:16+08:00",
+            wall_runtime_sec=1802.5,
+        )
+        (self.run_dir / "server" / "phase2" / "runtime.log").unlink()
+
+        self.assertFalse(coordinator.report_counts_as_pass(report, "M3"))
+        note = coordinator.report_completion_note(report, "M3")
+        self.assertIn("server/phase2/runtime.log", note)
 
 
 class CoordinatorRepoFreshnessTests(unittest.TestCase):
@@ -378,6 +404,50 @@ class RunM3ProcessCleanupTests(unittest.TestCase):
                 f"wait:{run_m3.PROCESS_STOP_TIMEOUT_SEC}",
             ],
         )
+
+
+class RunM3ArtifactCollectionTests(unittest.TestCase):
+    def test_fetch_remote_artifacts_reports_runtime_fetch_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server_dir = Path(tmpdir)
+            failure = run_m3.run_m0.CommandResult(
+                command=["ssh"],
+                returncode=255,
+                stdout="",
+                stderr="ssh: connect to host 192.168.11.1 port 22: Operation not permitted",
+            )
+
+            with unittest.mock.patch.object(run_m3.run_m1, "remote_fetch_text", return_value=failure):
+                step = run_m3.fetch_remote_artifacts({}, "/remote/run", server_dir, "phase2")
+
+            self.assertEqual(step.status, "blocked")
+            self.assertIn("runtime.log", step.summary)
+            self.assertTrue((server_dir / "runtime.log").exists())
+
+    def test_fetch_remote_artifacts_reports_audio_dump_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server_dir = Path(tmpdir)
+            runtime = run_m3.run_m0.CommandResult(
+                command=["ssh"],
+                returncode=0,
+                stdout="server log\n",
+                stderr="",
+            )
+            failure = run_m3.run_m0.CommandResult(
+                command=["ssh"],
+                returncode=1,
+                stdout="",
+                stderr="missing audio dump",
+            )
+
+            with unittest.mock.patch.object(run_m3.run_m1, "remote_fetch_text", return_value=runtime):
+                with unittest.mock.patch.object(run_m3.run_m1, "remote_fetch_binary_base64", return_value=failure):
+                    step = run_m3.fetch_remote_artifacts({}, "/remote/run", server_dir, "phase2")
+
+            self.assertEqual(step.status, "fail")
+            self.assertIn("audio dump", step.summary)
+            self.assertEqual((server_dir / "runtime.log").read_text(encoding="utf-8"), "server log\n")
+            self.assertEqual((server_dir / "audio_dump.pcm").read_bytes(), b"")
 
 
 class RunM3RefreshWindowTests(unittest.TestCase):
