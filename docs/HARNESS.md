@@ -61,9 +61,11 @@ Harness 运行前，默认已由上游文档确定：
    - 按里程碑执行默认参数链路或参数矩阵
 5. `collect`
    - 收集 client/server 日志、状态、音频 dump、设备信息
-6. `verdict`
+6. `ui-verify`
+   - 校验可见状态、可见参数、可见日志与刷新时效
+7. `verdict`
    - 输出 `pass` / `fail` / `blocked`
-7. `promote-skill`（按需）
+8. `promote-skill`（按需）
    - 从本次 run 的产物、日志、修复路径中提炼可复用技巧
    - 若满足复用条件，则新增或更新 `.codex/skills/<skill-name>/SKILL.md`
 
@@ -112,6 +114,12 @@ Harness 运行前，默认已由上游文档确定：
     runtime.log
     status.json
     audio_dump.pcm
+  ui/
+    snapshot.json
+    visible-status.json
+    visible-config.json
+    visible-logs.json
+    refresh-check.json
 ```
 
 原则：
@@ -126,6 +134,13 @@ Harness 运行前，默认已由上游文档确定：
 - `M2`：参数安全范围、回退提示、状态回显进入 Harness。
 - `M3`：长时间稳定性、断线恢复、指标采集进入 Harness。
 
+UI 对齐要求：
+
+- M0：Server UI 能显示虚拟麦状态与错误
+- M1：连接/监听/推流状态在 UI 可见且及时刷新
+- M2：生效参数与 fallback 在 UI 可见且正确
+- M3：真实 App 运行时，UI 长时刷新、断线恢复与过期提示都正确
+
 规则：
 
 - 只存在代码路径、但没有进入 Harness 的能力，不算真正完成。
@@ -133,6 +148,8 @@ Harness 运行前，默认已由上游文档确定：
 - 一个工作包是否结束，以 Harness 结论为准。
 - Harness 给出 `pass` 后，应继续进入当前里程碑下一个工作包，或进入下一个未完成里程碑。
 - Harness 给出 `fail` 后，应继续进入修复循环，而不是停下。
+- 后台状态正确但 UI 显示错误、缺失或刷新过慢，Harness 不应给出 `pass`。
+- 单元测试通过但真实 App 运行未验证，M3 不应给出 `pass`。
 
 ## 8. 阻塞分类
 
@@ -162,6 +179,7 @@ Harness 只接受三类结果：
 - 执行阶段变更
 - 产物结构变更
 - verdict 口径变更
+- UI 可见性检查规则变更
 - `.harness/hosts.env` 入口字段变更
 - 双机执行拓扑变更
 
@@ -172,3 +190,4 @@ Harness 只接受三类结果：
 run 结束后，如果产物和修复过程里出现了稳定可复用技巧，可以将其升级为项目私有 skill。
 
 skill 机制的总规则由 `docs/OPERATING_MODEL.md` 和 `AGENTS.md` 约束。
+UI 验收规则由 `docs/UI_TESTING.md` 约束。

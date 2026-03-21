@@ -121,11 +121,26 @@ UI 在 Server 模式下通过 UDP 控制面轮询：
 - `netmic://snapshot`：UI 订阅后接收 `UiSnapshot` 推送
 - `netmic://waveform`：客户端采集到的时域波形（20 FPS / 128 点）
 
+## UI 真相模型
+- 所有可见状态应来源于 `UiSnapshot` 或 `UiWaveform`
+- 同一字段在配置页、状态页、日志页的呈现必须一致
+- 若后端状态已更新但 UI 未及时反映，应视为 UI 缺陷
+- 若状态已过期但 UI 未给出提示，应视为 UI 缺陷
+
+## 刷新要求
+- `netmic://snapshot` 到达后，页面应在一次正常渲染周期内更新
+- Server 状态轮询周期当前为 1000 ms
+- 波形目标刷新频率当前为 20 FPS
+- UI 刷新时效与真实 App 验收要求统一见 `docs/UI_TESTING.md`
+
 ## UI 对齐 MVP 的关键点
 - 参数范围：采样率 / 帧长 / bitrate / buffer 必须限制在 `MVP.md` 范围内
 - 回退提示：展示 `fallbacks` 列表用于提示“已回退到 X”
 - 状态页：连接状态 + 指标 + 当前生效参数
 - 日志页：按级别过滤 + 导出入口（MVP）
+
+## UI 测试
+- 渲染层、交互层、IPC 集成层和真实 App 验收统一见 `docs/UI_TESTING.md`
 
 ## macOS 权限说明
 - 需要在 `apps/netmic-ui/src-tauri/Info.plist` 提供 `NSMicrophoneUsageDescription`

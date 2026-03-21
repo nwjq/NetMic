@@ -16,7 +16,7 @@
 - `docs/ROADMAP.md`：里程碑顺序与验收规则。
 - `docs/MODULE_OWNERS.md`：模块责任边界与冲突处理规则。
 - `docs/ENV.md`：运行时变量与 Harness 本地配置约定。
-- `docs/PROTO.md` / `docs/UI.md`：协议、状态机、UI/IPC 契约（按需阅读）。
+- `docs/PROTO.md` / `docs/UI.md` / `docs/UI_TESTING.md`：协议、状态机、UI/IPC 契约与 UI 验收规则（按需阅读）。
 
 ## 全局原则
 - 先看全局控制面，再看局部执行面。
@@ -25,6 +25,8 @@
 - 每次工作都必须能进入 Harness，并生成统一产物与结论。
 - 事实写入 `docs/`，方法写入 `.codex/skills/`。
 - 除非 `docs/ROADMAP.md` 全部里程碑完成，或当前主线被真实配置阻塞，否则不能自行停下。
+- UI 的显示正确性和刷新及时性属于正式验收面。
+- 不能只靠单元测试作为 M3 结论；M3 必须包含真实 App 运行验收。
 
 ## Harness 原则
 - 默认目标拓扑：`macOS Client + Linux Server`，通过局域网完成 M0-M3。
