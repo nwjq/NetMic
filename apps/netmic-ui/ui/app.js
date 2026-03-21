@@ -17,6 +17,7 @@ let currentTab = "config";
 let waveformPoints = [];
 let waveformCanvas = null;
 let waveformCtx = null;
+let pendingHarnessRenderReport = false;
 
 const sampleRates = [16000, 24000, 32000, 44100, 48000];
 const chunkOptions = [10, 20, 40, 60];
@@ -107,6 +108,9 @@ const createTauriAdapter = (tauriApi) => {
     },
     async exportLogs() {
       return invoke("export_logs");
+    },
+    async reportHarnessRender(ack) {
+      return invoke("report_harness_render", { ack });
     },
     onSnapshot(handler) {
       event.listen(EVENT_SNAPSHOT, (payload) => {
@@ -276,6 +280,34 @@ const updateWaveform = (payload) => {
   drawWaveform();
 };
 
+const scheduleAfterRender = (callback) => {
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => callback());
+    return;
+  }
+  window.setTimeout(callback, 0);
+};
+
+const collectHarnessVisibleState = () => ({
+  active_tab: currentTab,
+  status_label: elements.statusLabel.textContent || "",
+  status_note: elements.statusNote.textContent || "",
+});
+
+const reportHarnessRender = () => {
+  if (!hasTauri || !adapter.reportHarnessRender || pendingHarnessRenderReport) return;
+  pendingHarnessRenderReport = true;
+  scheduleAfterRender(() => {
+    pendingHarnessRenderReport = false;
+    adapter.reportHarnessRender({
+      snapshot: state,
+      visible: collectHarnessVisibleState(),
+    }).catch(() => {
+      // Harness ack 失败时不打断正常 UI 渲染。
+    });
+  });
+};
+
 const render = ({ skipConfig = false } = {}) => {
   renderModeButtons({ state, elements, isBusy });
   renderStatusPill({ state, elements });
@@ -298,6 +330,7 @@ const render = ({ skipConfig = false } = {}) => {
   }
   renderStatus({ state, elements, ensureWaveformCanvas });
   renderLogs({ state, elements });
+  reportHarnessRender();
 };
 
 const registerAdapterListeners = () => {

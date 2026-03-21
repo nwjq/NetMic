@@ -120,6 +120,10 @@
 - `NETMIC_UI_HARNESS_EVENT_LOG`
   - 默认值：未设置
   - 用途：真实 `netmic-ui` 在 Harness 模式下追加写入 snapshot 事件日志（ndjson），供 M3 恢复判定使用。
+- `NETMIC_UI_HARNESS_RENDER_LOG`
+  - 默认值：未设置
+  - 用途：真实 `netmic-ui` 前端每次完成一次可见渲染后追加写入 render ack（ndjson）。
+  - 说明：M3 应优先使用该日志判定“前端确实刷新过”，而不是只看后端 snapshot 写盘。
 - `NETMIC_SERVER_AUDIO_DUMP`
   - 默认值：未设置（关闭）
   - 用途：设置为文件路径时，将收到的 PCM16 payload 追加写入文件，供排障使用。

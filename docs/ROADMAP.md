@@ -114,8 +114,9 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
   - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 启动真实 `netmic-ui`
   - 默认执行 30 分钟真实 App 长测
+  - 更短 `--app-runtime-sec` 仅用于调试，不计入 `M3 pass`
   - 自动打断并恢复远端 `netmic-server`
-  - 以真实 App snapshot/event log 校验 reconnect 与长时刷新
+  - 以前端 render ack + 真实 App snapshot/event log 校验 reconnect 与长时刷新
 
 ---
 

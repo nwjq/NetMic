@@ -38,6 +38,7 @@ const ENV_HARNESS_SERVER_PORT: &str = "NETMIC_UI_HARNESS_SERVER_PORT";
 const ENV_HARNESS_INPUT_DEVICE: &str = "NETMIC_UI_HARNESS_INPUT_DEVICE";
 const ENV_HARNESS_SNAPSHOT_PATH: &str = "NETMIC_UI_HARNESS_SNAPSHOT_PATH";
 const ENV_HARNESS_EVENT_LOG: &str = "NETMIC_UI_HARNESS_EVENT_LOG";
+const ENV_HARNESS_RENDER_LOG: &str = "NETMIC_UI_HARNESS_RENDER_LOG";
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 const CLIENT_SERVER_TIMEOUT_MULTIPLIER: u64 = 3;
 const CLIENT_RECONNECT_BASE_DELAY_MS: u64 = 1_000;
@@ -291,6 +292,19 @@ struct UiSnapshot {
     runtime: UiRuntime,
     devices: UiDevices,
     logs: Vec<UiLogEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HarnessVisibleState {
+    active_tab: String,
+    status_label: String,
+    status_note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HarnessRenderAck {
+    snapshot: UiSnapshot,
+    visible: HarnessVisibleState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -589,22 +603,43 @@ fn maybe_write_harness_snapshot(snapshot: &UiSnapshot) {
     }
 
     if let Some(path) = env_trimmed(ENV_HARNESS_EVENT_LOG) {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let payload = serde_json::json!({
-            "ts_ms": now_ms(),
-            "snapshot": snapshot,
-        });
-        if let Ok(line) = serde_json::to_string(&payload) {
-            use std::io::Write;
+        append_harness_json_line(
+            PathBuf::from(path),
+            &serde_json::json!({
+                "ts_ms": now_ms(),
+                "snapshot": snapshot,
+            }),
+        );
+    }
+}
 
-            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = writeln!(file, "{line}");
-            }
+fn append_harness_json_line(path: PathBuf, payload: &serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(line) = serde_json::to_string(payload) {
+        use std::io::Write;
+
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{line}");
         }
     }
+}
+
+#[tauri::command]
+fn report_harness_render(ack: HarnessRenderAck) -> bool {
+    let Some(path) = env_trimmed(ENV_HARNESS_RENDER_LOG) else {
+        return false;
+    };
+    append_harness_json_line(
+        PathBuf::from(path),
+        &serde_json::json!({
+            "ts_ms": now_ms(),
+            "snapshot": ack.snapshot,
+            "visible": ack.visible,
+        }),
+    );
+    true
 }
 
 fn harness_server_port() -> u16 {
@@ -2049,7 +2084,8 @@ fn main() {
             virtual_mic_create,
             virtual_mic_remove,
             export_logs,
-            clear_logs
+            clear_logs,
+            report_harness_render
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2337,5 +2373,29 @@ mod tests {
         assert!(!accepted);
         assert_eq!(state.snapshot.status, "error");
         assert!(state.snapshot.status_note.contains("timeout"));
+    }
+
+    #[test]
+    fn harness_render_ack_writes_frontend_log() {
+        let log_path = std::env::temp_dir().join(format!("netmic-ui-render-{}.ndjson", now_ms()));
+        std::env::set_var(ENV_HARNESS_RENDER_LOG, &log_path);
+
+        let ack = HarnessRenderAck {
+            snapshot: AppState::default().snapshot,
+            visible: HarnessVisibleState {
+                active_tab: "status".to_string(),
+                status_label: "推流中".to_string(),
+                status_note: "推流中（握手成功）".to_string(),
+            },
+        };
+
+        assert!(report_harness_render(ack));
+
+        let payload = fs::read_to_string(&log_path).expect("render log should exist");
+        assert!(payload.contains("\"active_tab\":\"status\""), "{payload}");
+        assert!(payload.contains("\"status_label\":\"推流中\""), "{payload}");
+
+        let _ = fs::remove_file(&log_path);
+        std::env::remove_var(ENV_HARNESS_RENDER_LOG);
     }
 }

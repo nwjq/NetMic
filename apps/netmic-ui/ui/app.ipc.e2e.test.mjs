@@ -17,6 +17,7 @@ const buildDom = async () => {
   global.document = dom.window.document;
   global.HTMLElement = dom.window.HTMLElement;
   global.Event = dom.window.Event;
+  global.window.requestAnimationFrame = (callback) => setTimeout(callback, 0);
 
   const canvasProto = dom.window.HTMLCanvasElement.prototype;
   Object.defineProperty(canvasProto, "getContext", {
@@ -90,6 +91,8 @@ const createTauriStub = () => {
         return { ...snapshot };
       case "export_logs":
         return { ok: true };
+      case "report_harness_render":
+        return true;
       default:
         return { ...snapshot };
     }
@@ -124,6 +127,7 @@ test("ipc adapter calls invoke and updates UI from snapshot", async () => {
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(tauri.calls.some((call) => call.command === "get_status"));
+  assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
 
   modeButtons[1].dispatchEvent(new window.Event("click"));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -140,4 +144,8 @@ test("ipc adapter calls invoke and updates UI from snapshot", async () => {
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(statusNote.textContent, "来自 IPC 事件");
+  const renderAck = tauri.calls
+    .filter((call) => call.command === "report_harness_render")
+    .at(-1);
+  assert.equal(renderAck.args.ack.visible.status_note, "来自 IPC 事件");
 });

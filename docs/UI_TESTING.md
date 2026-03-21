@@ -63,6 +63,7 @@ UI 可见内容只应来源于：
 目标：
 
 - Tauri App 实际跑起来时，用户看到的内容正确，且刷新及时
+- Harness 必须以“前端完成渲染后的 ack”为准，不能只看后端 snapshot 已写出
 
 这层不是可选项。
 
@@ -113,6 +114,7 @@ Harness 对 UI 的要求：
 ```text
 .harness/runs/<run_id>/ui/
   snapshot.json
+  render-log.ndjson
   visible-status.json
   visible-config.json
   visible-logs.json
@@ -138,6 +140,7 @@ Harness 对 UI 的要求：
 
 - 长时间运行时 UI 持续刷新
 - 断线与恢复状态可见
+- 前端 render ack 持续产生，且时间窗口满足刷新要求
 - 实际 App 运行过程中，没有预期之外的可见 bug
 
 ## 8. 结论

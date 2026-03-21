@@ -475,6 +475,10 @@ def relative_artifact(path: Path) -> str:
 def run_ui_verify(
     snapshot: Dict[str, object],
     ui_dir: Path,
+    *,
+    step_id: str = "ui-verify",
+    success_summary: str = "M0 UI 产物已生成，虚拟麦状态可见",
+    failure_summary: str = "UI 产物生成失败",
 ) -> StepResult:
     snapshot_path = ui_dir / "snapshot.json"
     write_json(snapshot_path, snapshot)
@@ -495,13 +499,9 @@ def run_ui_verify(
         if render_result.returncode == 0
         else classify_output(render_result.stderr or render_result.stdout)
     )
-    ui_summary = (
-        "M0 UI 产物已生成，虚拟麦状态可见"
-        if ui_status == "pass"
-        else "UI 产物生成失败"
-    )
+    ui_summary = success_summary if ui_status == "pass" else failure_summary
     return StepResult(
-        "ui-verify",
+        step_id,
         ui_status,
         ui_summary,
         [
