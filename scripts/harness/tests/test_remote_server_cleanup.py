@@ -34,6 +34,7 @@ class RemoteServerCleanupTests(unittest.TestCase):
         self.assertIn("UDP port 43000 remains busy after cleanup", script)
         self.assertIn("grep ':43000'", script)
         self.assertIn("lsof -t -iUDP:43000", script)
+        self.assertIn("if [ \"$pid\" = \"$$\" ] || [ \"$pid\" = \"$PPID\" ]", script)
         self.assertIn("if ! kill -0 \"$pid\"", script)
         self.assertIn("failed to bind UDP socket", script)
         self.assertIn("did not bind UDP port 43000 in time", script)
@@ -52,6 +53,7 @@ class RemoteServerCleanupTests(unittest.TestCase):
         self.assertIn("cleanup_port_pids()", script)
         self.assertIn("grep ':43000'", script)
         self.assertIn("lsof -t -iUDP:43000", script)
+        self.assertIn("if [ \"$pid\" = \"$$\" ] || [ \"$pid\" = \"$PPID\" ]", script)
         self.assertIn("rm -f /tmp/netmic-phase/server.pid", script)
 
 

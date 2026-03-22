@@ -118,6 +118,9 @@ cleanup_named_processes() {{
   fi
   pids="$(pgrep -u "$(id -u)" -f '(^|/)netmic-server([[:space:]]|$)|cargo run -p netmic-server' || true)"
   for pid in $pids; do
+    if [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ]; then
+      continue
+    fi
     stop_pid "$pid"
   done
 }}
@@ -248,6 +251,9 @@ cleanup_named_processes() {{
   fi
   pids="$(pgrep -u "$(id -u)" -f '(^|/)netmic-server([[:space:]]|$)|cargo run -p netmic-server' || true)"
   for pid in $pids; do
+    if [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ]; then
+      continue
+    fi
     stop_pid "$pid"
   done
 }}
