@@ -44,6 +44,7 @@ const elements = {
   windowMinimize: document.getElementById("window-minimize"),
   windowMaximize: document.getElementById("window-maximize"),
   windowClose: document.getElementById("window-close"),
+  dragHandles: Array.from(document.querySelectorAll("[data-window-drag-handle]")),
   resetDefaults: document.getElementById("reset-defaults"),
   configConnection: document.getElementById("config-connection"),
   configAudio: document.getElementById("config-audio"),
@@ -113,20 +114,43 @@ const createTauriAdapter = (tauriApi) => {
       return true;
     },
     async toggleMaximizeWindow() {
-      if (!currentWindow || typeof currentWindow.toggleMaximize !== "function") {
+      if (!currentWindow) {
         return false;
       }
-      await currentWindow.toggleMaximize();
-      if (typeof currentWindow.isMaximized === "function") {
-        return currentWindow.isMaximized();
+      const isMaximized =
+        typeof currentWindow.isMaximized === "function"
+          ? Boolean(await currentWindow.isMaximized())
+          : false;
+      if (isMaximized) {
+        if (typeof currentWindow.unmaximize === "function") {
+          await currentWindow.unmaximize();
+        } else if (typeof currentWindow.toggleMaximize === "function") {
+          await currentWindow.toggleMaximize();
+        } else {
+          return false;
+        }
+        return false;
       }
-      return false;
+      if (typeof currentWindow.maximize === "function") {
+        await currentWindow.maximize();
+      } else if (typeof currentWindow.toggleMaximize === "function") {
+        await currentWindow.toggleMaximize();
+      } else {
+        return false;
+      }
+      return true;
     },
     async isWindowMaximized() {
       if (!currentWindow || typeof currentWindow.isMaximized !== "function") {
         return false;
       }
       return currentWindow.isMaximized();
+    },
+    startWindowDrag() {
+      if (!currentWindow || typeof currentWindow.startDragging !== "function") {
+        return false;
+      }
+      return currentWindow.startDragging();
     },
     async resetDefaults() {
       return invoke("reset_defaults");

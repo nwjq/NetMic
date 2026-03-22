@@ -60,6 +60,12 @@ export const bindActions = ({
   renderLogs,
   setWindowState,
 }) => {
+  const stopTitlebarGesture = (event) => {
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  };
+
   const handleMinimize = async () => {
     await adapter.minimizeWindow();
   };
@@ -93,16 +99,35 @@ export const bindActions = ({
   });
 
   if (elements.windowMinimize) {
+    elements.windowMinimize.addEventListener("pointerdown", stopTitlebarGesture);
+    elements.windowMinimize.addEventListener("mousedown", stopTitlebarGesture);
     elements.windowMinimize.addEventListener("click", handleMinimize);
   }
 
   if (elements.windowMaximize) {
+    elements.windowMaximize.addEventListener("pointerdown", stopTitlebarGesture);
+    elements.windowMaximize.addEventListener("mousedown", stopTitlebarGesture);
     elements.windowMaximize.addEventListener("click", handleToggleMaximize);
   }
 
   if (elements.windowClose) {
+    elements.windowClose.addEventListener("pointerdown", stopTitlebarGesture);
+    elements.windowClose.addEventListener("mousedown", stopTitlebarGesture);
     elements.windowClose.addEventListener("click", handleHideToTray);
   }
+
+  (elements.dragHandles || []).forEach((handle) => {
+    const startDrag = (event) => {
+      if (event && typeof event.button === "number" && event.button !== 0) return;
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (adapter.startWindowDrag) {
+        void adapter.startWindowDrag();
+      }
+    };
+    handle.addEventListener("mousedown", startDrag);
+  });
 
   elements.resetDefaults.addEventListener("click", async () => {
     const snapshot = await adapter.resetDefaults();

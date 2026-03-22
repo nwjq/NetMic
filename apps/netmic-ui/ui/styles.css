@@ -73,6 +73,8 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
+  cursor: grab;
+  user-select: none;
 }
 
 .titlebar-caption-text {
@@ -85,6 +87,8 @@ body {
 
 .titlebar-drag-fill {
   min-height: 22px;
+  cursor: grab;
+  user-select: none;
 }
 
 .topbar {

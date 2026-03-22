@@ -5,9 +5,17 @@ import { bindActions, bindConfigInputs } from "./app.interactions.js";
 const createEmitter = () => ({
   handlers: {},
   addEventListener(event, handler) {
-    this.handlers[event] = handler;
+    this.handlers[event] = this.handlers[event] || [];
+    this.handlers[event].push(handler);
   },
 });
+
+const emit = async (target, event, payload = {}) => {
+  const handlers = target.handlers[event] || [];
+  for (const handler of handlers) {
+    await handler(payload);
+  }
+};
 
 const createButton = (dataset = {}) => ({
   dataset,
@@ -39,6 +47,7 @@ test("bindActions triggers mode change when idle", async () => {
     windowMinimize: createButton(),
     windowMaximize: createButton(),
     windowClose: createButton(),
+    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -91,7 +100,7 @@ test("bindActions triggers mode change when idle", async () => {
     setWindowState: () => {},
   });
 
-  await elements.modeButtons[1].handlers.click();
+  await emit(elements.modeButtons[1], "click");
   assert.equal(setModeCalled, "server");
   assert.deepEqual(setStateValue, { mode: "server" });
 });
@@ -105,6 +114,7 @@ test("bindActions blocks mode change when busy", async () => {
     windowMinimize: createButton(),
     windowMaximize: createButton(),
     windowClose: createButton(),
+    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -153,7 +163,7 @@ test("bindActions blocks mode change when busy", async () => {
     setWindowState: () => {},
   });
 
-  await elements.modeButtons[0].handlers.click();
+  await emit(elements.modeButtons[0], "click");
   assert.equal(setModeCalled, null);
 });
 
@@ -166,6 +176,7 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     windowMinimize: createButton(),
     windowMaximize: createButton(),
     windowClose: createButton(),
+    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -217,10 +228,10 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     setWindowState: () => {},
   });
 
-  await elements.primaryAction.handlers.click();
+  await emit(elements.primaryAction, "click");
   assert.deepEqual(lastSnapshot, { status: "streaming" });
   busy = true;
-  await elements.primaryAction.handlers.click();
+  await emit(elements.primaryAction, "click");
   assert.deepEqual(lastSnapshot, { status: "idle" });
 });
 
@@ -233,6 +244,7 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
     windowMinimize: createButton(),
     windowMaximize: createButton(),
     windowClose: createButton(),
+    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -262,6 +274,10 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
     },
     async toggleMaximizeWindow() {
       calls.push("maximize");
+      return true;
+    },
+    startWindowDrag() {
+      calls.push("drag");
       return true;
     },
     async clearLogs() {
@@ -297,7 +313,9 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
       },
       ...options,
     };
-    await root.handlers.keydown(event);
+    for (const handler of root.handlers.keydown || []) {
+      await handler(event);
+    }
     return event;
   };
 
@@ -310,6 +328,79 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
   assert.equal(closeEvent.prevented, true);
   assert.deepEqual(calls, ["minimize", "maximize", "hide"]);
   assert.deepEqual(windowState, [{ maximized: true }]);
+});
+
+test("bindActions starts dragging from explicit drag handle", async () => {
+  const root = createEmitter();
+  const dragHandle = createButton();
+  const elements = {
+    modeButtons: [],
+    navButtons: [],
+    primaryAction: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
+    dragHandles: [dragHandle],
+    resetDefaults: createButton(),
+    logFilter: createEmitter(),
+    logClear: createButton(),
+    logExport: createButton(),
+  };
+  let dragCalls = 0;
+  let stopped = 0;
+  const adapter = {
+    async start() {
+      return {};
+    },
+    async stop() {
+      return {};
+    },
+    async hideToTray() {
+      return true;
+    },
+    async minimizeWindow() {
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      return false;
+    },
+    startWindowDrag() {
+      dragCalls += 1;
+      return true;
+    },
+    async resetDefaults() {
+      return {};
+    },
+    async clearLogs() {
+      return {};
+    },
+    async exportLogs() {},
+    async setMode() {
+      return {};
+    },
+  };
+
+  bindActions({
+    elements,
+    getState: () => ({ mode: "client", status: "idle" }),
+    setState: () => {},
+    adapter,
+    root,
+    setActiveTab: () => {},
+    isBusy: () => false,
+    renderLogs: () => {},
+    setWindowState: () => {},
+  });
+
+  await emit(dragHandle, "mousedown", {
+    button: 0,
+    preventDefault() {
+      stopped += 1;
+    },
+  });
+
+  assert.equal(dragCalls, 1);
+  assert.equal(stopped, 1);
 });
 
 test("bindConfigInputs converts number and checkbox values", async () => {
@@ -357,15 +448,15 @@ test("bindConfigInputs converts number and checkbox values", async () => {
     adapter,
   });
 
-  await numberInput.handlers.change({ target: numberInput });
+  await emit(numberInput, "change", { target: numberInput });
   assert.equal(receivedConfig.server_port, 43001);
 
   checkboxInput.checked = true;
-  await checkboxInput.handlers.change({ target: checkboxInput });
+  await emit(checkboxInput, "change", { target: checkboxInput });
   assert.equal(receivedConfig.auto_reconnect, true);
 
   appCheckbox.checked = true;
-  await appCheckbox.handlers.change({ target: appCheckbox });
+  await emit(appCheckbox, "change", { target: appCheckbox });
   assert.equal(launchAtLoginValue, true);
 });
 
@@ -406,7 +497,7 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
     adapter,
   });
 
-  await forceButton.handlers.click();
+  await emit(forceButton, "click");
   assert.equal(forced, true);
   assert.deepEqual(lastSnapshot, { status: "listening" });
 });
@@ -419,6 +510,7 @@ test("bindActions forwards custom window controls", async () => {
     windowMinimize: createButton(),
     windowMaximize: createButton(),
     windowClose: createButton(),
+    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -443,6 +535,9 @@ test("bindActions forwards custom window controls", async () => {
       return true;
     },
     async toggleMaximizeWindow() {
+      return true;
+    },
+    startWindowDrag() {
       return true;
     },
     async resetDefaults() {
@@ -470,9 +565,15 @@ test("bindActions forwards custom window controls", async () => {
     },
   });
 
-  await elements.windowMinimize.handlers.click();
-  await elements.windowMaximize.handlers.click();
-  await elements.windowClose.handlers.click();
+  await emit(elements.windowMinimize, "pointerdown", { stopPropagation() {} });
+  await emit(elements.windowMinimize, "mousedown", { stopPropagation() {} });
+  await emit(elements.windowMinimize, "click");
+  await emit(elements.windowMaximize, "pointerdown", { stopPropagation() {} });
+  await emit(elements.windowMaximize, "mousedown", { stopPropagation() {} });
+  await emit(elements.windowMaximize, "click");
+  await emit(elements.windowClose, "pointerdown", { stopPropagation() {} });
+  await emit(elements.windowClose, "mousedown", { stopPropagation() {} });
+  await emit(elements.windowClose, "click");
   assert.equal(minimized, 1);
   assert.equal(maximizeState, true);
   assert.equal(hidden, 1);

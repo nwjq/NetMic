@@ -129,6 +129,16 @@ const createTauriStub = () => {
           calls.push({ command: "window.minimize", args: {} });
           return true;
         },
+        async maximize() {
+          maximized = true;
+          calls.push({ command: "window.maximize", args: { maximized } });
+          return true;
+        },
+        async unmaximize() {
+          maximized = false;
+          calls.push({ command: "window.unmaximize", args: { maximized } });
+          return true;
+        },
         async toggleMaximize() {
           maximized = !maximized;
           calls.push({ command: "window.toggleMaximize", args: { maximized } });
@@ -137,6 +147,10 @@ const createTauriStub = () => {
         async isMaximized() {
           calls.push({ command: "window.isMaximized", args: { maximized } });
           return maximized;
+        },
+        startDragging() {
+          calls.push({ command: "window.startDragging", args: {} });
+          return true;
         },
       };
     },
@@ -310,7 +324,14 @@ test("custom window controls call tauri window APIs", async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
-  assert.ok(tauri.calls.some((call) => call.command === "window.toggleMaximize"));
+  assert.ok(
+    tauri.calls.some(
+      (call) =>
+        call.command === "window.maximize" ||
+        call.command === "window.unmaximize" ||
+        call.command === "window.toggleMaximize"
+    )
+  );
   assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
 });
 
@@ -345,6 +366,37 @@ test("window shortcuts map to the same custom window actions", async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
-  assert.ok(tauri.calls.some((call) => call.command === "window.toggleMaximize"));
+  assert.ok(
+    tauri.calls.some(
+      (call) => call.command === "window.maximize" || call.command === "window.toggleMaximize"
+    )
+  );
   assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
+});
+
+test("drag handle starts native window dragging", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
+
+  await import(`./app.js?titlebar-drag=${Date.now()}`);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  document
+    .querySelector("[data-window-drag-handle]")
+    .dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.ok(tauri.calls.some((call) => call.command === "window.startDragging"));
 });
