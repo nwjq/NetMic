@@ -53,6 +53,11 @@ const METRICS_REPORT_SECS: u64 = 5;
 const BUFFER_TARGET_MS: u64 = 100;
 /// 音频 sink 选择（pulse/null，默认 pulse）。
 const ENV_AUDIO_SINK: &str = "NETMIC_SERVER_AUDIO_SINK";
+/// 虚拟麦克风固定使用 MVP 内部标准：48kHz / mono / s16le。
+const VIRTUAL_MIC_SAMPLE_RATE_HZ: u32 = 48_000;
+const VIRTUAL_MIC_CHANNELS: u16 = 1;
+const VIRTUAL_MIC_SAMPLE_FORMAT: &str = "s16le";
+const VIRTUAL_MIC_CHANNEL_MAP: &str = "mono";
 /// 是否启用测试音注入（1/true/on/yes）。
 const ENV_TEST_TONE: &str = "NETMIC_SERVER_TEST_TONE";
 /// 测试音持续时长（秒，0 表示不限制）。
@@ -1048,8 +1053,18 @@ fn env_or_default(name: &str, fallback: &str) -> String {
 fn ensure_virtual_mic_created() -> Result<()> {
     let config = virtual_mic_config_from_env();
     if source_exists(&config.source_name)? {
-        info!(source = %config.source_name, "virtual mic already exists");
-        return Ok(());
+        if source_matches_internal_format(&config.source_name)? {
+            info!(source = %config.source_name, "virtual mic already exists");
+            return Ok(());
+        }
+        warn!(
+            source = %config.source_name,
+            expected_format = VIRTUAL_MIC_SAMPLE_FORMAT,
+            expected_channels = VIRTUAL_MIC_CHANNELS,
+            expected_rate_hz = VIRTUAL_MIC_SAMPLE_RATE_HZ,
+            "virtual mic exists with stale format, recreating"
+        );
+        remove_virtual_mic()?;
     }
 
     let sink_id = load_pactl_module(
@@ -1057,6 +1072,10 @@ fn ensure_virtual_mic_created() -> Result<()> {
         &[
             format!("sink_name={}", config.sink_name),
             format!("sink_properties=device.description={}", config.sink_desc),
+            format!("format={}", VIRTUAL_MIC_SAMPLE_FORMAT),
+            format!("rate={}", VIRTUAL_MIC_SAMPLE_RATE_HZ),
+            format!("channels={}", VIRTUAL_MIC_CHANNELS),
+            format!("channel_map={}", VIRTUAL_MIC_CHANNEL_MAP),
         ],
     )?;
 
@@ -1069,6 +1088,11 @@ fn ensure_virtual_mic_created() -> Result<()> {
                 "source_properties=device.description={}",
                 config.source_desc
             ),
+            format!("format={}", VIRTUAL_MIC_SAMPLE_FORMAT),
+            format!("rate={}", VIRTUAL_MIC_SAMPLE_RATE_HZ),
+            format!("channels={}", VIRTUAL_MIC_CHANNELS),
+            format!("channel_map={}", VIRTUAL_MIC_CHANNEL_MAP),
+            format!("master_channel_map={}", VIRTUAL_MIC_CHANNEL_MAP),
         ],
     )
     .map_err(|err| {
@@ -1254,6 +1278,30 @@ fn source_exists(name: &str) -> Result<bool> {
         if source == Some(name) {
             return Ok(true);
         }
+    }
+    Ok(false)
+}
+
+fn source_matches_internal_format(name: &str) -> Result<bool> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+        .map_err(|err| anyhow::anyhow!("pactl 不可用: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("pactl 执行失败: {}", stderr.trim()));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 6 || parts[1] != name {
+            continue;
+        }
+        return Ok(
+            parts[3] == VIRTUAL_MIC_SAMPLE_FORMAT
+                && parts[4] == format!("{}ch", VIRTUAL_MIC_CHANNELS)
+                && parts[5] == format!("{}Hz", VIRTUAL_MIC_SAMPLE_RATE_HZ),
+        );
     }
     Ok(false)
 }

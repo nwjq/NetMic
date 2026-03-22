@@ -45,6 +45,10 @@ SINK_NAME="${NETMIC_VIRTUAL_MIC_SINK_NAME:-${NAME_PREFIX}_sink}"
 SOURCE_NAME="${NETMIC_VIRTUAL_MIC_SOURCE_NAME:-${NAME_PREFIX}_source}"
 SINK_DESCRIPTION="${NETMIC_VIRTUAL_MIC_SINK_DESC:-NetMic_Virtual_Sink}"
 SOURCE_DESCRIPTION="${NETMIC_VIRTUAL_MIC_SOURCE_DESC:-NetMic_Virtual_Mic}"
+SAMPLE_RATE_HZ=48000
+CHANNELS=1
+SAMPLE_FORMAT=s16le
+CHANNEL_MAP=mono
 
 log() {
   if [[ "$JSON" -eq 0 ]]; then
@@ -70,6 +74,14 @@ require_cmd() {
 
 source_exists() {
   pactl list short sources 2>/dev/null | awk '{print $2}' | grep -Fx "$SOURCE_NAME" >/dev/null 2>&1
+}
+
+source_matches_internal_format() {
+  pactl list short sources 2>/dev/null \
+    | awk -v name="$SOURCE_NAME" -v format="$SAMPLE_FORMAT" -v channels="${CHANNELS}ch" -v rate="${SAMPLE_RATE_HZ}Hz" '
+        $2 == name && $4 == format && $5 == channels && $6 == rate { found=1 }
+        END { exit(found ? 0 : 1) }
+      '
 }
 
 find_module_id() {
@@ -153,22 +165,32 @@ create_action() {
   read_state
 
   if source_exists; then
+    if ! source_matches_internal_format; then
+      log_warn "检测到旧格式虚拟麦克风，先重建为 ${SAMPLE_FORMAT}/${CHANNELS}ch/${SAMPLE_RATE_HZ}Hz"
+      cleanup_modules
+      rm -f "$STATE_FILE"
+    else
     # 注意：在 UTF-8 locale 下，中文括号可能被 bash 误判为变量名的一部分。
     # 使用 ${VAR} 形式避免 set -u 误报 unbound variable。
-    log "检测到已存在虚拟麦克风：${SOURCE_NAME}（执行幂等 create）"
-    if [[ -z "${SINK_MODULE_ID:-}" ]]; then
-      SINK_MODULE_ID="$(find_module_id module-null-sink "sink_name=${SINK_NAME}")"
+      log "检测到已存在虚拟麦克风：${SOURCE_NAME}（执行幂等 create）"
+      if [[ -z "${SINK_MODULE_ID:-}" ]]; then
+        SINK_MODULE_ID="$(find_module_id module-null-sink "sink_name=${SINK_NAME}")"
+      fi
+      if [[ -z "${SOURCE_MODULE_ID:-}" ]]; then
+        SOURCE_MODULE_ID="$(find_module_id module-remap-source "source_name=${SOURCE_NAME}")"
+      fi
+      write_state
+      return 0
     fi
-    if [[ -z "${SOURCE_MODULE_ID:-}" ]]; then
-      SOURCE_MODULE_ID="$(find_module_id module-remap-source "source_name=${SOURCE_NAME}")"
-    fi
-    write_state
-    return 0
   fi
 
   SINK_MODULE_ID="$(pactl load-module module-null-sink \
     "sink_name=${SINK_NAME}" \
-    "sink_properties=device.description=${SINK_DESCRIPTION}" 2>/dev/null || true)"
+    "sink_properties=device.description=${SINK_DESCRIPTION}" \
+    "format=${SAMPLE_FORMAT}" \
+    "rate=${SAMPLE_RATE_HZ}" \
+    "channels=${CHANNELS}" \
+    "channel_map=${CHANNEL_MAP}" 2>/dev/null || true)"
   if [[ -z "$SINK_MODULE_ID" ]]; then
     log_fail "无法加载 module-null-sink（创建虚拟 sink 失败）。"
     return 1
@@ -177,7 +199,12 @@ create_action() {
   SOURCE_MODULE_ID="$(pactl load-module module-remap-source \
     "master=${SINK_NAME}.monitor" \
     "source_name=${SOURCE_NAME}" \
-    "source_properties=device.description=${SOURCE_DESCRIPTION}" 2>/dev/null || true)"
+    "source_properties=device.description=${SOURCE_DESCRIPTION}" \
+    "format=${SAMPLE_FORMAT}" \
+    "rate=${SAMPLE_RATE_HZ}" \
+    "channels=${CHANNELS}" \
+    "channel_map=${CHANNEL_MAP}" \
+    "master_channel_map=${CHANNEL_MAP}" 2>/dev/null || true)"
   if [[ -z "$SOURCE_MODULE_ID" ]]; then
     log_fail "无法加载 module-remap-source（创建虚拟麦克风失败）。"
     cleanup_modules

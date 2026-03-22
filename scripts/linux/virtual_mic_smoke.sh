@@ -7,6 +7,10 @@ SUFFIX="${NETMIC_SMOKE_ID:-$$}"
 PREFIX="${NETMIC_SMOKE_PREFIX:-netmic_smoke}"
 KEEP_MODULES=0
 CLEANUP_ONLY=0
+SAMPLE_RATE_HZ=48000
+CHANNELS=1
+SAMPLE_FORMAT=s16le
+CHANNEL_MAP=mono
 
 SINK_MODULE_ID=""
 SOURCE_MODULE_ID=""
@@ -118,7 +122,11 @@ create_virtual_mic() {
   log "创建虚拟 sink：$sink"
   SINK_MODULE_ID="$(pactl load-module module-null-sink \
     "sink_name=${sink}" \
-    "sink_properties=device.description=NetMic_Smoke_Sink" 2>/dev/null || true)"
+    "sink_properties=device.description=NetMic_Smoke_Sink" \
+    "format=${SAMPLE_FORMAT}" \
+    "rate=${SAMPLE_RATE_HZ}" \
+    "channels=${CHANNELS}" \
+    "channel_map=${CHANNEL_MAP}" 2>/dev/null || true)"
 
   if [[ -z "$SINK_MODULE_ID" ]]; then
     log_fail "无法加载 module-null-sink"
@@ -129,7 +137,12 @@ create_virtual_mic() {
   SOURCE_MODULE_ID="$(pactl load-module module-remap-source \
     "master=${sink}.monitor" \
     "source_name=${source}" \
-    "source_properties=device.description=NetMic_Smoke_Source" 2>/dev/null || true)"
+    "source_properties=device.description=NetMic_Smoke_Source" \
+    "format=${SAMPLE_FORMAT}" \
+    "rate=${SAMPLE_RATE_HZ}" \
+    "channels=${CHANNELS}" \
+    "channel_map=${CHANNEL_MAP}" \
+    "master_channel_map=${CHANNEL_MAP}" 2>/dev/null || true)"
 
   if [[ -z "$SOURCE_MODULE_ID" ]]; then
     log_fail "无法加载 module-remap-source"
