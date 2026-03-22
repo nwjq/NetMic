@@ -971,7 +971,9 @@ fn load_tray_icon(_app: &AppHandle) -> Option<Image<'static>> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        _app.default_window_icon().cloned()
+        _app
+            .default_window_icon()
+            .map(|icon| icon.clone().to_owned())
     }
 }
 
