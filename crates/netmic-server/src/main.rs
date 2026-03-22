@@ -39,8 +39,14 @@ const DEFAULT_BIND_ADDR: &str = "0.0.0.0";
 const ENV_BIND_ADDR: &str = "NETMIC_SERVER_BIND_ADDR";
 /// 是否自动创建虚拟麦克风（1/true/on/yes）。
 const ENV_VIRTUAL_MIC_AUTO_CREATE: &str = "NETMIC_SERVER_VIRTUAL_MIC_AUTO_CREATE";
-/// 单次接收缓冲区大小（足够容纳 MVP 小包）。
-const MAX_DATAGRAM_SIZE: usize = 1500;
+/// 单次接收缓冲区大小。
+///
+/// 说明：
+/// - 当前真实数据面仍发送“音频帧头 + 原始 PCM16”；
+/// - 默认 48kHz / mono / 20ms 单帧即 960 samples = 1920 bytes，
+///   再加帧头 JSON 后会超过 1500 bytes；
+/// - 若仍按 1500 接收，UDP 载荷会被截断，导致 Pulse 写入拿到奇数字节长度。
+const MAX_DATAGRAM_SIZE: usize = 4096;
 /// 读超时（用于避免无流量时永久阻塞，便于日志可观测）。
 const READ_TIMEOUT_MS: u64 = 250;
 /// 进入重连状态的空闲宽限（避免偶发抖动立即触发重连）。
@@ -101,7 +107,7 @@ mod tests {
     use netmic_proto::control::{decode_control_message, decode_control_payload};
     use netmic_proto::control::{CONTROL_TYPE_HANDSHAKE_REQUEST, CONTROL_TYPE_HANDSHAKE_RESPONSE};
     use netmic_proto::datagram::wrap_control_json;
-    use netmic_proto::protocol::HandshakeRequest;
+    use netmic_proto::protocol::{AudioFrameHeader, HandshakeRequest};
 
     #[test]
     fn receiver_locks_first_client_and_rejects_others() {
@@ -260,6 +266,30 @@ mod tests {
         let right = f32::from_le_bytes(expanded[4..8].try_into().expect("right"));
         assert!(left > 0.99);
         assert!((left - right).abs() < 0.0001);
+    }
+
+    #[test]
+    fn receiver_buffer_can_hold_default_pcm16_datagram() {
+        let params = SessionParams::mvp_default();
+        let frame =
+            vec![0_u8; (params.sample_rate_hz as usize * params.chunk_ms as usize / 1000) * 2];
+        let datagram = netmic_proto::datagram::wrap_audio_pcm16_with_header(
+            &AudioFrameHeader {
+                session_id: "session-1".to_string(),
+                seq: 0,
+                timestamp_ms: 1,
+                frame_samples: (params.sample_rate_hz * params.chunk_ms / 1000),
+            },
+            &frame,
+        )
+        .expect("wrap default pcm16 datagram");
+
+        assert!(
+            datagram.len() <= MAX_DATAGRAM_SIZE,
+            "default pcm16 datagram len={} exceeds recv buffer {}",
+            datagram.len(),
+            MAX_DATAGRAM_SIZE
+        );
     }
 }
 
@@ -1402,7 +1432,9 @@ fn adapt_pcm16_for_sink(
     input_channels: u16,
     output_spec: &PulseSinkSpec,
 ) -> Result<Vec<u8>> {
-    if input_channels == output_spec.channels && matches!(output_spec.format, PulseSampleFormat::S16le) {
+    if input_channels == output_spec.channels
+        && matches!(output_spec.format, PulseSampleFormat::S16le)
+    {
         return Ok(payload.to_vec());
     }
     if input_channels != 1 || output_spec.channels < 1 {
@@ -1456,11 +1488,9 @@ fn source_matches_internal_format(name: &str) -> Result<bool> {
         if parts.len() < 6 || parts[1] != name {
             continue;
         }
-        return Ok(
-            parts[3] == VIRTUAL_MIC_SAMPLE_FORMAT
-                && parts[4] == format!("{}ch", VIRTUAL_MIC_CHANNELS)
-                && parts[5] == format!("{}Hz", VIRTUAL_MIC_SAMPLE_RATE_HZ),
-        );
+        return Ok(parts[3] == VIRTUAL_MIC_SAMPLE_FORMAT
+            && parts[4] == format!("{}ch", VIRTUAL_MIC_CHANNELS)
+            && parts[5] == format!("{}Hz", VIRTUAL_MIC_SAMPLE_RATE_HZ));
     }
     Ok(false)
 }
