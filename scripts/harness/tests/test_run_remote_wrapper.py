@@ -31,7 +31,21 @@ class RunRemoteWrapperTests(unittest.TestCase):
                 result = run_m0.run_remote(self.env, "echo ok")
 
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "payload line\n")
+        self.assertEqual(result.stdout, "payload line")
+
+    def test_run_remote_strips_marker_from_non_newline_base64_payload(self):
+        raw = run_m0.CommandResult(
+            command=["ssh"],
+            returncode=1,
+            stdout="YWJjZA==__NETMIC_REMOTE_EXIT__=0\n",
+            stderr="",
+        )
+        with mock.patch.object(run_m0, "run_command", return_value=raw):
+            with mock.patch.object(run_m0, "build_ssh_base", return_value=["ssh"]):
+                result = run_m0.run_remote(self.env, "echo ok")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "YWJjZA==")
 
     def test_run_remote_preserves_ssh_transport_failure_without_marker(self):
         raw = run_m0.CommandResult(

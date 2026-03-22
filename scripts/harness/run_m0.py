@@ -825,7 +825,7 @@ cd {shlex.quote(linux_root)} || exit 98
 {script}
 )
 status=$?
-printf '__NETMIC_REMOTE_EXIT__=%s\\n' "$status"
+printf '\\n__NETMIC_REMOTE_EXIT__=%s\\n' "$status"
 exit 0
 """.strip()
     command = ssh_base + [f"bash -lc {shlex.quote(remote_script)}"]
@@ -834,20 +834,17 @@ exit 0
 
     marker_prefix = "__NETMIC_REMOTE_EXIT__="
     marker_status = None
-    output_lines: List[str] = []
-    for line in result.stdout.splitlines():
-        if line.startswith(marker_prefix):
-            raw_value = line[len(marker_prefix) :].strip()
-            try:
-                marker_status = int(raw_value)
-            except ValueError:
-                output_lines.append(line)
-            continue
-        output_lines.append(line)
-
-    stdout = "\n".join(output_lines)
-    if result.stdout.endswith("\n") and output_lines:
-        stdout += "\n"
+    stdout = result.stdout
+    marker_index = result.stdout.rfind(marker_prefix)
+    if marker_index != -1:
+        raw_value = result.stdout[marker_index + len(marker_prefix) :].splitlines()[0].strip()
+        try:
+            marker_status = int(raw_value)
+            stdout = result.stdout[:marker_index]
+            if stdout.endswith("\n"):
+                stdout = stdout[:-1]
+        except ValueError:
+            marker_status = None
     if marker_status is None or result.returncode == 255:
         return CommandResult(result.command, result.returncode, stdout, result.stderr)
     return CommandResult(result.command, marker_status, stdout, result.stderr)
