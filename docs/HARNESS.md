@@ -115,7 +115,9 @@ Harness 运行前，默认已由上游文档确定：
 
 原因：
 
-- 双机 Harness 依赖真实 `ssh/rsync` 访问 `NETMIC_HARNESS_LINUX_HOST`
+- 双机 Harness 依赖真实 `ssh` 访问 `NETMIC_HARNESS_LINUX_HOST`
+- 当本地与 Linux 远端仓库都指向同一个 Git origin 时，`sync-remote` 默认先走 `git push` + 远端 `git pull --ff-only`
+- 只有 git 条件不成立时，才回退到 `rsync`
 - 目标通常是 `192.168.x.x` / `10.x.x.x` 这类私网地址
 - 这类链路必须从用户本机直接发起，才能复用现有 SSH 配置、密码或私钥
 
@@ -249,9 +251,11 @@ UI 对齐要求：
    - 校验本机依赖（`ssh`、必要时 `sshpass`、`node`）
 2. `sync-remote`
    - 对比本地工作区与 Linux 侧仓库
-   - 若不一致，则通过 `rsync` 先把远端工作区同步到当前本地状态
+   - 若本地与远端仓库同源（同 Git origin、同 branch），优先执行本地 `git push` 与远端 `git pull --ff-only`
+   - 若远端仓库存在未提交改动、分支不一致或 `origin` 不一致，则该步直接判 `blocked`，避免继续污染远端工作区
+   - 只有远端不是可直接 pull 的 Git checkout（例如首次 bootstrap、缺少 `.git` / `origin`）时，才回退到 `rsync`
    - 同步前必须先校验远端仓库路径安全；若路径可疑则直接 `blocked`
-   - `ssh/rsync` 必须在超时窗口内返回；超时同样判为 `blocked`
+   - `ssh/git/rsync` 必须在超时窗口内返回；超时同样判为 `blocked`
    - `.harness/hosts.env`、`.harness/runs/`、`.codex/`、`target/`、`node_modules/` 不进入同步范围
 3. `bootstrap-linux`
    - `scripts/linux/audio_selfcheck.sh --json`
@@ -267,7 +271,10 @@ UI 对齐要求：
 判定规则：
 
 - 自检、虚拟麦就绪、测试音实际写入、UI 产物齐备时，才可判定 `pass`
-- 缺少 SSH / `sshpass` / `rsync` / `node`、缺少 PipeWire/Pulse 依赖、Linux 不可达、或本机/沙箱禁止 SSH 连接等，判定 `blocked`
+- 缺少 SSH / `sshpass` / `node`、缺少 PipeWire/Pulse 依赖、Linux 不可达、或本机/沙箱禁止 SSH 连接等，判定 `blocked`
+- 只有在需要回退 `rsync` 时，缺少 `rsync` 才判定 `blocked`
+- 远端仓库 dirty、分支不一致、或 `origin` 不一致，判定 `blocked`
+- `git push/pull` 的非环境类执行错误，判定 `fail`
 - 其余执行错误判定为 `fail`
 
 ### 顶层 coordinator 口径
@@ -287,7 +294,7 @@ UI 对齐要求：
 - `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
 - `M3` 旧产物还必须证明“断线期间前端 render ack 已显示可见的重连/过期提示”，至少要保证 reconnect 阶段的 `snapshot.status_note`、可见 `status_note` 与状态标签一致
 - 若最新 M3 产物只是调试短跑或缺少 wall-clock 证据，`coordinator_state.json` 应明确写出“不计 pass”的原因
-- coordinator 自身的远端同步预检同样会生成产物；若 `rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要
+- coordinator 自身的远端同步预检同样会生成产物；若 `git/rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要
 
 当前已存在的专门 runner：
 

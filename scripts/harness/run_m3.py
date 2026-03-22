@@ -716,7 +716,7 @@ def main() -> int:
     prepare_status, prepare_summary = run_m0.require_local_tools(
         password_auth=bool(env.get("NETMIC_HARNESS_LINUX_PASSWORD", "") and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")),
         needs_node=True,
-        needs_rsync=True,
+        needs_rsync=False,
     )
     if shutil.which("cargo") is None:
         prepare_status = "blocked"

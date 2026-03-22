@@ -606,10 +606,8 @@ def write_sync_artifacts(
     sync_dir = run_dir / "sync"
     log_path = sync_dir / "remote-sync.log"
     state_path = sync_dir / "remote-sync.json"
-    titles = ["rsync-dry-run", "rsync-apply"]
     for index, result in enumerate(results):
-        title = titles[index] if index < len(titles) else f"rsync-step-{index + 1}"
-        run_m0.append_section(log_path, title, result.stdout, result.stderr)
+        run_m0.append_section(log_path, run_m0.sync_command_title(result, index), result.stdout, result.stderr)
     write_json(
         state_path,
         {
@@ -658,7 +656,7 @@ def main() -> int:
                 and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")
             ),
             needs_node=False,
-            needs_rsync=True,
+            needs_rsync=False,
         )
         steps.append(
             {

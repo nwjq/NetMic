@@ -48,6 +48,14 @@ REPO_STATE_EXCLUDES = (
     "node_modules/",
     "AGENTS.md",
 )
+REMOTE_GIT_STATE_EXCLUDES = (
+    ".harness/hosts.env",
+    ".harness/runs/",
+    ".codex/",
+    "target/",
+    "node_modules/",
+    "AGENTS.md",
+)
 
 BLOCKED_PATTERNS = (
     "permission denied",
@@ -138,6 +146,10 @@ def should_exclude_sync_path(path_str: str) -> bool:
 
 def should_exclude_repo_state_path(path_str: str) -> bool:
     return should_exclude_path(path_str, REPO_STATE_EXCLUDES)
+
+
+def should_exclude_remote_git_state_path(path_str: str) -> bool:
+    return should_exclude_path(path_str, REMOTE_GIT_STATE_EXCLUDES)
 
 
 def _hash_repo_path(relative_path: str) -> str:
@@ -254,7 +266,15 @@ def summarize_command_issue(output: str) -> str:
         line = raw_line.strip()
         if not line:
             continue
-        if line.startswith("rsync ") or line.startswith("sending incremental file list"):
+        if (
+            line.startswith("rsync ")
+            or line.startswith("sending incremental file list")
+            or line.startswith("__NETMIC_GIT_STATE__")
+            or line.startswith("__NETMIC_GIT_STATUS__")
+            or line.startswith("branch=")
+            or line.startswith("head=")
+            or line.startswith("origin=")
+        ):
             continue
         return line
     return ""
@@ -283,6 +303,158 @@ def require_local_tools(password_auth: bool, needs_node: bool, needs_rsync: bool
             "缺少本地依赖：" + ", ".join(missing),
         )
     return ("pass", "本地依赖检查通过")
+
+
+def parse_git_status_paths(output: str, exclude_fn) -> List[str]:
+    paths: List[str] = []
+    for raw_line in output.splitlines():
+        if len(raw_line) < 4:
+            continue
+        raw_path = raw_line[3:].strip()
+        if not raw_path:
+            continue
+        path_parts = [part.strip() for part in raw_path.split(" -> ")] if " -> " in raw_path else [raw_path]
+        relative_path = path_parts[-1]
+        if exclude_fn(relative_path):
+            continue
+        paths.append(relative_path)
+    return sorted(set(paths))
+
+
+def normalize_git_origin(value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def summarize_paths(paths: List[str], limit: int = 5) -> str:
+    if not paths:
+        return ""
+    preview = ", ".join(paths[:limit])
+    if len(paths) <= limit:
+        return preview
+    return f"{preview} 等 {len(paths)} 项"
+
+
+def sync_command_title(result: CommandResult, index: int) -> str:
+    joined = " ".join(result.command)
+    if "git branch --show-current" in joined and "git status --porcelain" in joined:
+        return "git-state-probe"
+    if "git push origin" in joined:
+        return "git-push"
+    if "git pull --ff-only origin" in joined:
+        return "git-pull"
+    if "rsync" in result.command:
+        return "rsync-dry-run" if "--dry-run" in result.command else "rsync-apply"
+    return f"sync-step-{index + 1}"
+
+
+def inspect_local_git_sync_state(local_root: Path) -> Dict[str, object]:
+    if shutil.which("git") is None:
+        return {
+            "available": False,
+            "fallback_allowed": True,
+            "error": "本机缺少 git，无法走 git 同步",
+        }
+
+    top_level = run_command(["git", "rev-parse", "--show-toplevel"], cwd=local_root)
+    combined = "\n".join(part for part in (top_level.stdout, top_level.stderr) if part).strip()
+    if top_level.returncode != 0:
+        fallback_allowed = "not a git repository" in combined.lower()
+        return {
+            "available": False,
+            "fallback_allowed": fallback_allowed,
+            "error": summarize_command_issue(combined) or "本地目录不是 git 仓库",
+        }
+
+    branch = run_command(["git", "branch", "--show-current"], cwd=local_root)
+    head = run_command(["git", "rev-parse", "HEAD"], cwd=local_root)
+    origin = run_command(["git", "remote", "get-url", "origin"], cwd=local_root)
+    status = run_command(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
+        cwd=local_root,
+    )
+    commands = (branch, head, origin, status)
+    first_failure = next((item for item in commands if item.returncode != 0), None)
+    if first_failure is not None:
+        failure_text = "\n".join(part for part in (first_failure.stdout, first_failure.stderr) if part).strip()
+        fallback_allowed = "no such remote" in failure_text.lower()
+        return {
+            "available": False,
+            "fallback_allowed": fallback_allowed,
+            "error": summarize_command_issue(failure_text) or "本地 git 状态探测失败",
+        }
+
+    return {
+        "available": True,
+        "branch": branch.stdout.strip(),
+        "head_commit": head.stdout.strip(),
+        "origin": origin.stdout.strip(),
+        "dirty_paths": parse_git_status_paths(status.stdout, should_exclude_repo_state_path),
+    }
+
+
+def inspect_remote_git_sync_state(env: Dict[str, str]) -> Tuple[Dict[str, object], CommandResult]:
+    probe = run_remote(
+        env,
+        (
+            "set -euo pipefail; "
+            "branch=$(git branch --show-current); "
+            "head=$(git rev-parse HEAD); "
+            "origin=$(git remote get-url origin); "
+            "printf '__NETMIC_GIT_STATE__\\n'; "
+            "printf 'branch=%s\\n' \"$branch\"; "
+            "printf 'head=%s\\n' \"$head\"; "
+            "printf 'origin=%s\\n' \"$origin\"; "
+            "printf '__NETMIC_GIT_STATUS__\\n'; "
+            "git status --porcelain=v1 --untracked-files=all --ignored=no"
+        ),
+    )
+    combined = "\n".join(part for part in (probe.stdout, probe.stderr) if part).strip()
+    if probe.returncode != 0:
+        lower = combined.lower()
+        fallback_allowed = "not a git repository" in lower or "no such remote" in lower
+        return (
+            {
+                "available": False,
+                "fallback_allowed": fallback_allowed,
+                "error": summarize_command_issue(combined) or "远端 git 状态探测失败",
+            },
+            probe,
+        )
+
+    marker_state = "__NETMIC_GIT_STATE__\n"
+    marker_status = "\n__NETMIC_GIT_STATUS__\n"
+    if marker_state not in probe.stdout or marker_status not in probe.stdout:
+        return (
+            {
+                "available": False,
+                "fallback_allowed": False,
+                "error": "远端 git 状态输出格式异常",
+            },
+            probe,
+        )
+
+    _, payload = probe.stdout.split(marker_state, 1)
+    meta_text, status_text = payload.split(marker_status, 1)
+    meta: Dict[str, str] = {}
+    for raw_line in meta_text.splitlines():
+        if "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        meta[key.strip()] = value.strip()
+
+    return (
+        {
+            "available": True,
+            "branch": meta.get("branch", ""),
+            "head_commit": meta.get("head", ""),
+            "origin": meta.get("origin", ""),
+            "dirty_paths": parse_git_status_paths(status_text, should_exclude_remote_git_state_path),
+        },
+        probe,
+    )
 
 
 def remote_timeout_sec(env: Dict[str, str]) -> int:
@@ -410,14 +582,9 @@ def build_rsync_command(env: Dict[str, str], local_root: Path, dry_run: bool) ->
     return command
 
 
-def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandResult]]:
-    local_root = coordinator_root_from_env(env)
-    if not local_root.exists():
-        return ("blocked", f"本地 Coordinator 根目录不存在：{local_root}", [])
-    remote_root_status, remote_root_summary = validate_remote_workspace_root(env)
-    if remote_root_status != "pass":
-        return (remote_root_status, remote_root_summary, [])
-
+def sync_remote_workspace_via_rsync(env: Dict[str, str], local_root: Path) -> Tuple[str, str, List[CommandResult]]:
+    if shutil.which("rsync") is None:
+        return ("blocked", "缺少本地依赖：rsync（当前远端不能安全走 git pull）", [])
     timeout_sec = remote_timeout_sec(env)
     dry_run_result = run_command(
         build_rsync_command(env, local_root, dry_run=True),
@@ -449,15 +616,121 @@ def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandRe
     )
 
 
+def sync_remote_workspace_via_git(
+    env: Dict[str, str],
+    local_root: Path,
+    local_state: Dict[str, object],
+    remote_state: Dict[str, object],
+    remote_probe: CommandResult,
+) -> Tuple[str, str, List[CommandResult]]:
+    results = [remote_probe]
+    local_branch = str(local_state.get("branch", "") or "")
+    remote_branch = str(remote_state.get("branch", "") or "")
+    if not local_branch or not remote_branch:
+        return ("fail", "本地或远端当前分支为空，无法执行 git 同步", results)
+    if local_branch != remote_branch:
+        return (
+            "fail",
+            f"本地/远端分支不一致，拒绝继续同步：local={local_branch}, remote={remote_branch}",
+            results,
+        )
+
+    local_dirty_paths = list(local_state.get("dirty_paths", []))
+    if local_dirty_paths:
+        return (
+            "fail",
+            "本地仓库存在未提交产品代码，先提交再执行 git 同步："
+            + summarize_paths(local_dirty_paths),
+            results,
+        )
+
+    remote_dirty_paths = list(remote_state.get("dirty_paths", []))
+    if remote_dirty_paths:
+        return (
+            "fail",
+            "远端仓库存在未提交改动，不能直接 git pull --ff-only："
+            + summarize_paths(remote_dirty_paths),
+            results,
+        )
+
+    local_head = str(local_state.get("head_commit", "") or "")
+    remote_head = str(remote_state.get("head_commit", "") or "")
+    if local_head and remote_head and local_head == remote_head:
+        return ("pass", "远端 Git 工作区已与本地提交一致", results)
+
+    push_result = run_command(
+        ["git", "push", "origin", local_branch],
+        timeout_sec=remote_timeout_sec(env),
+        cwd=local_root,
+    )
+    results.append(push_result)
+    push_output = "\n".join(part for part in (push_result.stdout, push_result.stderr) if part).strip()
+    if push_result.returncode != 0:
+        return (
+            classify_output(push_output),
+            build_command_failure_summary("本地 git push 失败", push_output),
+            results,
+        )
+
+    pull_result = run_remote(
+        env,
+        f"git pull --ff-only origin {shlex.quote(local_branch)}",
+    )
+    results.append(pull_result)
+    pull_output = "\n".join(part for part in (pull_result.stdout, pull_result.stderr) if part).strip()
+    if pull_result.returncode != 0:
+        return (
+            classify_output(pull_output),
+            build_command_failure_summary("远端 git pull --ff-only 失败", pull_output),
+            results,
+        )
+
+    return ("pass", "已通过 git push/pull 同步远端仓库", results)
+
+
+def sync_remote_workspace(env: Dict[str, str]) -> Tuple[str, str, List[CommandResult]]:
+    local_root = coordinator_root_from_env(env)
+    if not local_root.exists():
+        return ("blocked", f"本地 Coordinator 根目录不存在：{local_root}", [])
+    remote_root_status, remote_root_summary = validate_remote_workspace_root(env)
+    if remote_root_status != "pass":
+        return (remote_root_status, remote_root_summary, [])
+
+    local_state = inspect_local_git_sync_state(local_root)
+    if not local_state.get("available") and local_state.get("fallback_allowed", False):
+        return sync_remote_workspace_via_rsync(env, local_root)
+    if not local_state.get("available") and not local_state.get("fallback_allowed", False):
+        summary = str(local_state.get("error", "") or "本地 git 状态探测失败")
+        return ("fail", summary, [])
+
+    remote_state, remote_probe = inspect_remote_git_sync_state(env)
+
+    if local_state.get("available") and remote_state.get("available"):
+        if normalize_git_origin(str(local_state.get("origin", ""))) == normalize_git_origin(
+            str(remote_state.get("origin", ""))
+        ):
+            return sync_remote_workspace_via_git(env, local_root, local_state, remote_state, remote_probe)
+        return (
+            "blocked",
+            "本地与远端引用的 Git origin 不一致，拒绝再用 rsync 覆盖远端 checkout："
+            f" local={local_state.get('origin', '')}, remote={remote_state.get('origin', '')}",
+            [remote_probe],
+        )
+
+    if not remote_state.get("available") and not remote_state.get("fallback_allowed", False):
+        summary = str(remote_state.get("error", "") or "远端 git 状态探测失败")
+        return (classify_output(summary), summary, [remote_probe])
+
+    return sync_remote_workspace_via_rsync(env, local_root)
+
+
 def run_remote_sync_step(env: Dict[str, str], server_dir: Path) -> StepResult:
     log_path = server_dir / "remote-sync.log"
     state_path = server_dir / "remote-sync.json"
     status, summary, results = sync_remote_workspace(env)
     repo_state = collect_repo_state()
-    titles = ["rsync-dry-run", "rsync-apply"]
     for index, result in enumerate(results):
-        title = titles[index] if index < len(titles) else f"rsync-step-{index + 1}"
-        append_section(log_path, title, result.stdout, result.stderr)
+        append_section(log_path, sync_command_title(result, index), result.stdout, result.stderr)
     write_json(
         state_path,
         {
@@ -484,11 +757,11 @@ def decode_output(value: object) -> str:
     return str(value)
 
 
-def run_command(command: List[str], timeout_sec: int | None = None) -> CommandResult:
+def run_command(command: List[str], timeout_sec: int | None = None, cwd: Path | None = None) -> CommandResult:
     try:
         proc = subprocess.run(
             command,
-            cwd=str(ROOT),
+            cwd=str(cwd or ROOT),
             text=True,
             capture_output=True,
             encoding="utf-8",
@@ -804,7 +1077,7 @@ def main() -> int:
     prepare_status, prepare_summary = require_local_tools(
         password_auth=bool(env.get("NETMIC_HARNESS_LINUX_PASSWORD", "") and not env.get("NETMIC_HARNESS_LINUX_SSH_KEY", "")),
         needs_node=True,
-        needs_rsync=True,
+        needs_rsync=False,
     )
     prepare_artifacts = [relative_artifact(run_dir / "manifest.json")]
     steps.append(StepResult("prepare", prepare_status, prepare_summary, prepare_artifacts))
