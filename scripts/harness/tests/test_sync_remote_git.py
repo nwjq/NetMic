@@ -43,7 +43,7 @@ class SyncRemoteGitTests(unittest.TestCase):
         rsync_sync.assert_called_once()
         remote_probe.assert_not_called()
 
-    def test_sync_remote_workspace_blocks_when_remote_same_origin_is_dirty(self):
+    def test_sync_remote_workspace_fails_when_remote_same_origin_is_dirty(self):
         remote_probe = run_m0.CommandResult(["ssh", "git-status"], 0, "", "")
         with mock.patch.object(
             run_m0,
@@ -71,7 +71,7 @@ class SyncRemoteGitTests(unittest.TestCase):
         ):
             status, summary, results = run_m0.sync_remote_workspace(self.env)
 
-        self.assertEqual("blocked", status)
+        self.assertEqual("fail", status)
         self.assertIn("不能直接 git pull --ff-only", summary)
         self.assertIn("apps/netmic-ui/ui/app.js", summary)
         self.assertEqual([remote_probe], results)

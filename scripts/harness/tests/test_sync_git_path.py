@@ -84,7 +84,7 @@ class GitSyncPathTests(unittest.TestCase):
             ["git-state-probe", "git-push", "git-pull"],
         )
 
-    def test_same_origin_remote_dirty_is_blocked(self):
+    def test_same_origin_remote_dirty_is_fail(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             Path(tmpdir, "README.md").write_text("NetMic\n", encoding="utf-8")
             env = self.make_env(tmpdir)
@@ -124,7 +124,7 @@ class GitSyncPathTests(unittest.TestCase):
                 with mock.patch.object(run_m0, "run_remote", side_effect=fake_run_remote):
                     status, summary, commands = run_m0.sync_remote_workspace(env)
 
-        self.assertEqual(status, "blocked")
+        self.assertEqual(status, "fail")
         self.assertIn("远端仓库存在未提交改动", summary)
         self.assertIn("apps/netmic-ui/src-tauri/src/main.rs", summary)
         self.assertEqual(
