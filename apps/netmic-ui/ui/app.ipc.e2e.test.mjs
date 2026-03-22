@@ -313,3 +313,38 @@ test("custom window controls call tauri window APIs", async (t) => {
   assert.ok(tauri.calls.some((call) => call.command === "window.toggleMaximize"));
   assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
 });
+
+test("window shortcuts map to the same custom window actions", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
+
+  await import(`./app.js?window-shortcuts=${Date.now()}`);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  document.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "m", metaKey: true, bubbles: true })
+  );
+  document.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "F11", bubbles: true })
+  );
+  document.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "w", ctrlKey: true, bubbles: true })
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
+  assert.ok(tauri.calls.some((call) => call.command === "window.toggleMaximize"));
+  assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
+});

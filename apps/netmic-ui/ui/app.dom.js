@@ -61,12 +61,17 @@ export const renderPrimaryAction = ({ state, elements, isBusy }) => {
 export const renderAppActions = ({ elements, windowState }) => {
   if (elements.windowMinimize) {
     elements.windowMinimize.textContent = "最小化";
+    elements.windowMinimize.title = "最小化（macOS: Cmd+M / Linux: Ctrl+M）";
   }
   if (elements.windowMaximize) {
     elements.windowMaximize.textContent = windowState?.maximized ? "还原" : "最大化";
+    elements.windowMaximize.title = windowState?.maximized
+      ? "还原窗口（macOS: Ctrl+Cmd+F / Linux: F11）"
+      : "最大化（macOS: Ctrl+Cmd+F / Linux: F11）";
   }
   if (elements.windowClose) {
     elements.windowClose.textContent = "关闭";
+    elements.windowClose.title = "关闭到后台（macOS: Cmd+W / Linux: Ctrl+W）";
   }
 };
 

@@ -509,6 +509,7 @@ const init = async () => {
     getState,
     setState,
     adapter,
+    root: document,
     setActiveTab,
     isBusy,
     renderLogs: () => renderLogs({ state, elements }),

@@ -31,6 +31,7 @@ const createAppInput = ({ field, type = "checkbox" }) => ({
 });
 
 test("bindActions triggers mode change when idle", async () => {
+  const root = createEmitter();
   const elements = {
     modeButtons: [createButton({ mode: "client" }), createButton({ mode: "server" })],
     navButtons: [createButton({ tab: "config" })],
@@ -83,6 +84,7 @@ test("bindActions triggers mode change when idle", async () => {
       state = { ...state, ...snapshot };
     },
     adapter,
+    root,
     setActiveTab: () => {},
     isBusy: () => false,
     renderLogs: () => {},
@@ -95,6 +97,7 @@ test("bindActions triggers mode change when idle", async () => {
 });
 
 test("bindActions blocks mode change when busy", async () => {
+  const root = createEmitter();
   const elements = {
     modeButtons: [createButton({ mode: "client" })],
     navButtons: [],
@@ -143,6 +146,7 @@ test("bindActions blocks mode change when busy", async () => {
     getState: () => state,
     setState: () => {},
     adapter,
+    root,
     setActiveTab: () => {},
     isBusy: () => true,
     renderLogs: () => {},
@@ -154,6 +158,7 @@ test("bindActions blocks mode change when busy", async () => {
 });
 
 test("bindActions toggles start/stop via primaryAction", async () => {
+  const root = createEmitter();
   const elements = {
     modeButtons: [],
     navButtons: [],
@@ -205,6 +210,7 @@ test("bindActions toggles start/stop via primaryAction", async () => {
       state = { ...state, ...snapshot };
     },
     adapter,
+    root,
     setActiveTab: () => {},
     isBusy: () => busy,
     renderLogs: () => {},
@@ -216,6 +222,94 @@ test("bindActions toggles start/stop via primaryAction", async () => {
   busy = true;
   await elements.primaryAction.handlers.click();
   assert.deepEqual(lastSnapshot, { status: "idle" });
+});
+
+test("bindActions maps window shortcuts to custom window actions", async () => {
+  const root = createEmitter();
+  const elements = {
+    modeButtons: [],
+    navButtons: [],
+    primaryAction: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
+    resetDefaults: createButton(),
+    logFilter: createEmitter(),
+    logClear: createButton(),
+    logExport: createButton(),
+  };
+  const calls = [];
+  const adapter = {
+    async setMode() {
+      return {};
+    },
+    async start() {
+      return {};
+    },
+    async stop() {
+      return {};
+    },
+    async resetDefaults() {
+      return {};
+    },
+    async hideToTray() {
+      calls.push("hide");
+      return true;
+    },
+    async minimizeWindow() {
+      calls.push("minimize");
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      calls.push("maximize");
+      return true;
+    },
+    async clearLogs() {
+      return {};
+    },
+    async exportLogs() {},
+  };
+  const windowState = [];
+
+  bindActions({
+    elements,
+    getState: () => ({ mode: "client", status: "idle" }),
+    setState: () => {},
+    adapter,
+    root,
+    setActiveTab: () => {},
+    isBusy: () => false,
+    renderLogs: () => {},
+    setWindowState: (next) => windowState.push(next),
+  });
+
+  const shortcut = async (key, options = {}) => {
+    const event = {
+      key,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      prevented: false,
+      preventDefault() {
+        this.prevented = true;
+      },
+      ...options,
+    };
+    await root.handlers.keydown(event);
+    return event;
+  };
+
+  const minimizeEvent = await shortcut("m", { metaKey: true });
+  const maximizeEvent = await shortcut("F11");
+  const closeEvent = await shortcut("w", { ctrlKey: true });
+
+  assert.equal(minimizeEvent.prevented, true);
+  assert.equal(maximizeEvent.prevented, true);
+  assert.equal(closeEvent.prevented, true);
+  assert.deepEqual(calls, ["minimize", "maximize", "hide"]);
+  assert.deepEqual(windowState, [{ maximized: true }]);
 });
 
 test("bindConfigInputs converts number and checkbox values", async () => {

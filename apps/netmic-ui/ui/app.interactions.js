@@ -54,11 +54,27 @@ export const bindActions = ({
   getState,
   setState,
   adapter,
+  root,
   setActiveTab,
   isBusy,
   renderLogs,
   setWindowState,
 }) => {
+  const handleMinimize = async () => {
+    await adapter.minimizeWindow();
+  };
+
+  const handleToggleMaximize = async () => {
+    const maximized = await adapter.toggleMaximizeWindow();
+    if (typeof setWindowState === "function") {
+      setWindowState({ maximized: Boolean(maximized) });
+    }
+  };
+
+  const handleHideToTray = async () => {
+    await adapter.hideToTray();
+  };
+
   elements.modeButtons.forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (isBusy(getState())) return;
@@ -77,24 +93,15 @@ export const bindActions = ({
   });
 
   if (elements.windowMinimize) {
-    elements.windowMinimize.addEventListener("click", async () => {
-      await adapter.minimizeWindow();
-    });
+    elements.windowMinimize.addEventListener("click", handleMinimize);
   }
 
   if (elements.windowMaximize) {
-    elements.windowMaximize.addEventListener("click", async () => {
-      const maximized = await adapter.toggleMaximizeWindow();
-      if (typeof setWindowState === "function") {
-        setWindowState({ maximized: Boolean(maximized) });
-      }
-    });
+    elements.windowMaximize.addEventListener("click", handleToggleMaximize);
   }
 
   if (elements.windowClose) {
-    elements.windowClose.addEventListener("click", async () => {
-      await adapter.hideToTray();
-    });
+    elements.windowClose.addEventListener("click", handleHideToTray);
   }
 
   elements.resetDefaults.addEventListener("click", async () => {
@@ -109,5 +116,32 @@ export const bindActions = ({
   });
   elements.logExport.addEventListener("click", async () => {
     await adapter.exportLogs();
+  });
+
+  const eventRoot = root && typeof root.addEventListener === "function" ? root : null;
+  if (!eventRoot) return;
+  eventRoot.addEventListener("keydown", async (event) => {
+    const key = String(event.key || "").toLowerCase();
+    const primaryMod = event.metaKey || event.ctrlKey;
+    const hideToTray =
+      primaryMod && !event.shiftKey && !event.altKey && !event.repeat && key === "w";
+    const minimize =
+      primaryMod && !event.shiftKey && !event.altKey && !event.repeat && key === "m";
+    const toggleMaximize =
+      (!event.repeat && key === "f11") ||
+      (event.metaKey && event.ctrlKey && !event.shiftKey && !event.altKey && key === "f");
+    if (!hideToTray && !minimize && !toggleMaximize) return;
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (hideToTray) {
+      await handleHideToTray();
+      return;
+    }
+    if (minimize) {
+      await handleMinimize();
+      return;
+    }
+    await handleToggleMaximize();
   });
 };
