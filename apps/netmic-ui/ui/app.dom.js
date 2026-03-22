@@ -58,45 +58,6 @@ export const renderPrimaryAction = ({ state, elements, isBusy }) => {
   elements.primaryAction.textContent = state.mode === "client" ? "开始推流" : "开始监听";
 };
 
-export const renderAppActions = ({ elements, windowState }) => {
-  const setWindowControl = (element, label, title) => {
-    if (!element) return;
-    const labelElement =
-      typeof element.querySelector === "function"
-        ? element.querySelector(".window-control-label")
-        : null;
-    if (labelElement) {
-      labelElement.textContent = label;
-    } else {
-      element.textContent = label;
-    }
-    if (typeof element.setAttribute === "function") {
-      element.setAttribute("aria-label", label);
-      element.setAttribute("title", title || label);
-    } else {
-      element.title = title || label;
-    }
-  };
-
-  if (elements.windowMinimize) {
-    setWindowControl(elements.windowMinimize, "最小化", "最小化（macOS: Cmd+M / Linux: Ctrl+M）");
-  }
-  if (elements.windowMaximize) {
-    const label = windowState?.maximized ? "还原" : "最大化";
-    const title = windowState?.maximized
-      ? "还原窗口（macOS: Ctrl+Cmd+F / Linux: F11）"
-      : "最大化（macOS: Ctrl+Cmd+F / Linux: F11）";
-    setWindowControl(elements.windowMaximize, label, title);
-  }
-  if (elements.windowClose) {
-    setWindowControl(
-      elements.windowClose,
-      "关闭",
-      "关闭到后台（macOS: Cmd+W / Linux: Ctrl+W）"
-    );
-  }
-};
-
 export const renderLogs = ({ state, elements }) => {
   const filter = elements.logFilter.value || "all";
   const logs = state.logs.filter((log) => filter === "all" || log.level === filter);

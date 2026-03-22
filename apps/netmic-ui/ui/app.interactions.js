@@ -58,25 +58,7 @@ export const bindActions = ({
   setActiveTab,
   isBusy,
   renderLogs,
-  setWindowState,
 }) => {
-  const stopTitlebarGesture = (event) => {
-    if (event && typeof event.stopPropagation === "function") {
-      event.stopPropagation();
-    }
-  };
-
-  const handleMinimize = async () => {
-    await adapter.minimizeWindow();
-  };
-
-  const handleToggleMaximize = async () => {
-    const maximized = await adapter.toggleMaximizeWindow();
-    if (typeof setWindowState === "function") {
-      setWindowState({ maximized: Boolean(maximized) });
-    }
-  };
-
   const handleHideToTray = async () => {
     await adapter.hideToTray();
   };
@@ -96,38 +78,6 @@ export const bindActions = ({
   elements.primaryAction.addEventListener("click", async () => {
     const snapshot = isBusy(getState()) ? await adapter.stop() : await adapter.start();
     setState(snapshot);
-  });
-
-  if (elements.windowMinimize) {
-    elements.windowMinimize.addEventListener("pointerdown", stopTitlebarGesture);
-    elements.windowMinimize.addEventListener("mousedown", stopTitlebarGesture);
-    elements.windowMinimize.addEventListener("click", handleMinimize);
-  }
-
-  if (elements.windowMaximize) {
-    elements.windowMaximize.addEventListener("pointerdown", stopTitlebarGesture);
-    elements.windowMaximize.addEventListener("mousedown", stopTitlebarGesture);
-    elements.windowMaximize.addEventListener("click", handleToggleMaximize);
-  }
-
-  if (elements.windowClose) {
-    elements.windowClose.addEventListener("pointerdown", stopTitlebarGesture);
-    elements.windowClose.addEventListener("mousedown", stopTitlebarGesture);
-    elements.windowClose.addEventListener("click", handleHideToTray);
-  }
-
-  (elements.dragHandles || []).forEach((handle) => {
-    const startDrag = (event) => {
-      if (event && typeof event.button === "number" && event.button !== 0) return;
-      if (event && typeof event.preventDefault === "function") {
-        event.preventDefault();
-      }
-      if (adapter.startWindowDrag) {
-        void adapter.startWindowDrag();
-      }
-    };
-    handle.addEventListener("pointerdown", startDrag);
-    handle.addEventListener("mousedown", startDrag);
   });
 
   elements.resetDefaults.addEventListener("click", async () => {
@@ -151,23 +101,10 @@ export const bindActions = ({
     const primaryMod = event.metaKey || event.ctrlKey;
     const hideToTray =
       primaryMod && !event.shiftKey && !event.altKey && !event.repeat && key === "w";
-    const minimize =
-      primaryMod && !event.shiftKey && !event.altKey && !event.repeat && key === "m";
-    const toggleMaximize =
-      (!event.repeat && key === "f11") ||
-      (event.metaKey && event.ctrlKey && !event.shiftKey && !event.altKey && key === "f");
-    if (!hideToTray && !minimize && !toggleMaximize) return;
+    if (!hideToTray) return;
     if (typeof event.preventDefault === "function") {
       event.preventDefault();
     }
-    if (hideToTray) {
-      await handleHideToTray();
-      return;
-    }
-    if (minimize) {
-      await handleMinimize();
-      return;
-    }
-    await handleToggleMaximize();
+    await handleHideToTray();
   });
 };

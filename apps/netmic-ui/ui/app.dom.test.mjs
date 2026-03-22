@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SERVER_STATUS_STALE_ALERT_MS,
-  renderAppActions,
   renderConfig,
   renderLogs,
   renderModeButtons,
@@ -31,22 +30,6 @@ const createButton = (mode) => ({
 
 const createElements = () => {
   const statusDot = { style: {} };
-  const createWindowControl = () => {
-    const label = { textContent: "" };
-    return {
-      textContent: "",
-      title: "",
-      attributes: {},
-      querySelector(selector) {
-        return selector === ".window-control-label" ? label : null;
-      },
-      setAttribute(name, value) {
-        this.attributes[name] = value;
-        if (name === "title") this.title = value;
-      },
-      label,
-    };
-  };
   return {
     modeButtons: [createButton("client"), createButton("server")],
     statusLabel: { textContent: "" },
@@ -58,9 +41,6 @@ const createElements = () => {
       },
     },
     primaryAction: { textContent: "" },
-    windowMinimize: createWindowControl(),
-    windowMaximize: createWindowControl(),
-    windowClose: createWindowControl(),
     logFilter: { value: "all" },
     logList: { innerHTML: "" },
   };
@@ -131,18 +111,6 @@ test("renderPrimaryAction switches labels by mode/busy", () => {
     isBusy: () => false,
   });
   assert.equal(elements.primaryAction.textContent, "开始监听");
-});
-
-test("renderAppActions sets custom window control labels", () => {
-  const elements = createElements();
-  renderAppActions({ elements, windowState: { maximized: false } });
-  assert.equal(elements.windowMinimize.label.textContent, "最小化");
-  assert.equal(elements.windowMaximize.label.textContent, "最大化");
-  assert.equal(elements.windowClose.label.textContent, "关闭");
-  assert.match(elements.windowClose.title, /关闭到后台/);
-
-  renderAppActions({ elements, windowState: { maximized: true } });
-  assert.equal(elements.windowMaximize.label.textContent, "还原");
 });
 
 test("renderLogs respects log level filter", () => {

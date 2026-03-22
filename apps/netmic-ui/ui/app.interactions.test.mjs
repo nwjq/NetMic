@@ -44,10 +44,6 @@ test("bindActions triggers mode change when idle", async () => {
     modeButtons: [createButton({ mode: "client" }), createButton({ mode: "server" })],
     navButtons: [createButton({ tab: "config" })],
     primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -73,12 +69,6 @@ test("bindActions triggers mode change when idle", async () => {
     async hideToTray() {
       return true;
     },
-    async minimizeWindow() {
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      return false;
-    },
     async clearLogs() {
       return { logs: [] };
     },
@@ -97,7 +87,6 @@ test("bindActions triggers mode change when idle", async () => {
     setActiveTab: () => {},
     isBusy: () => false,
     renderLogs: () => {},
-    setWindowState: () => {},
   });
 
   await emit(elements.modeButtons[1], "click");
@@ -111,10 +100,6 @@ test("bindActions blocks mode change when busy", async () => {
     modeButtons: [createButton({ mode: "client" })],
     navButtons: [],
     primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -139,12 +124,6 @@ test("bindActions blocks mode change when busy", async () => {
     async hideToTray() {
       return true;
     },
-    async minimizeWindow() {
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      return false;
-    },
     async clearLogs() {
       return {};
     },
@@ -160,7 +139,6 @@ test("bindActions blocks mode change when busy", async () => {
     setActiveTab: () => {},
     isBusy: () => true,
     renderLogs: () => {},
-    setWindowState: () => {},
   });
 
   await emit(elements.modeButtons[0], "click");
@@ -173,10 +151,6 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     modeButtons: [],
     navButtons: [],
     primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -196,12 +170,6 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     },
     async hideToTray() {
       return true;
-    },
-    async minimizeWindow() {
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      return false;
     },
     async clearLogs() {
       return {};
@@ -225,7 +193,6 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     setActiveTab: () => {},
     isBusy: () => busy,
     renderLogs: () => {},
-    setWindowState: () => {},
   });
 
   await emit(elements.primaryAction, "click");
@@ -235,16 +202,12 @@ test("bindActions toggles start/stop via primaryAction", async () => {
   assert.deepEqual(lastSnapshot, { status: "idle" });
 });
 
-test("bindActions maps window shortcuts to custom window actions", async () => {
+test("bindActions maps close shortcut to hideToTray", async () => {
   const root = createEmitter();
   const elements = {
     modeButtons: [],
     navButtons: [],
     primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [],
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -268,24 +231,11 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
       calls.push("hide");
       return true;
     },
-    async minimizeWindow() {
-      calls.push("minimize");
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      calls.push("maximize");
-      return true;
-    },
-    startWindowDrag() {
-      calls.push("drag");
-      return true;
-    },
     async clearLogs() {
       return {};
     },
     async exportLogs() {},
   };
-  const windowState = [];
 
   bindActions({
     elements,
@@ -296,7 +246,6 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
     setActiveTab: () => {},
     isBusy: () => false,
     renderLogs: () => {},
-    setWindowState: (next) => windowState.push(next),
   });
 
   const shortcut = async (key, options = {}) => {
@@ -319,88 +268,10 @@ test("bindActions maps window shortcuts to custom window actions", async () => {
     return event;
   };
 
-  const minimizeEvent = await shortcut("m", { metaKey: true });
-  const maximizeEvent = await shortcut("F11");
   const closeEvent = await shortcut("w", { ctrlKey: true });
 
-  assert.equal(minimizeEvent.prevented, true);
-  assert.equal(maximizeEvent.prevented, true);
   assert.equal(closeEvent.prevented, true);
-  assert.deepEqual(calls, ["minimize", "maximize", "hide"]);
-  assert.deepEqual(windowState, [{ maximized: true }]);
-});
-
-test("bindActions starts dragging from explicit drag handle", async () => {
-  const root = createEmitter();
-  const dragHandle = createButton();
-  const elements = {
-    modeButtons: [],
-    navButtons: [],
-    primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [dragHandle],
-    resetDefaults: createButton(),
-    logFilter: createEmitter(),
-    logClear: createButton(),
-    logExport: createButton(),
-  };
-  let dragCalls = 0;
-  let stopped = 0;
-  const adapter = {
-    async start() {
-      return {};
-    },
-    async stop() {
-      return {};
-    },
-    async hideToTray() {
-      return true;
-    },
-    async minimizeWindow() {
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      return false;
-    },
-    startWindowDrag() {
-      dragCalls += 1;
-      return true;
-    },
-    async resetDefaults() {
-      return {};
-    },
-    async clearLogs() {
-      return {};
-    },
-    async exportLogs() {},
-    async setMode() {
-      return {};
-    },
-  };
-
-  bindActions({
-    elements,
-    getState: () => ({ mode: "client", status: "idle" }),
-    setState: () => {},
-    adapter,
-    root,
-    setActiveTab: () => {},
-    isBusy: () => false,
-    renderLogs: () => {},
-    setWindowState: () => {},
-  });
-
-  await emit(dragHandle, "mousedown", {
-    button: 0,
-    preventDefault() {
-      stopped += 1;
-    },
-  });
-
-  assert.equal(dragCalls, 1);
-  assert.equal(stopped, 1);
+  assert.deepEqual(calls, ["hide"]);
 });
 
 test("bindConfigInputs converts number and checkbox values", async () => {
@@ -500,81 +371,4 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
   await emit(forceButton, "click");
   assert.equal(forced, true);
   assert.deepEqual(lastSnapshot, { status: "listening" });
-});
-
-test("bindActions forwards custom window controls", async () => {
-  const elements = {
-    modeButtons: [],
-    navButtons: [],
-    primaryAction: createButton(),
-    windowMinimize: createButton(),
-    windowMaximize: createButton(),
-    windowClose: createButton(),
-    dragHandles: [],
-    resetDefaults: createButton(),
-    logFilter: createEmitter(),
-    logClear: createButton(),
-    logExport: createButton(),
-  };
-  let hidden = 0;
-  let minimized = 0;
-  let maximizeState = null;
-  const adapter = {
-    async start() {
-      return {};
-    },
-    async stop() {
-      return {};
-    },
-    async hideToTray() {
-      hidden += 1;
-      return true;
-    },
-    async minimizeWindow() {
-      minimized += 1;
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      return true;
-    },
-    startWindowDrag() {
-      return true;
-    },
-    async resetDefaults() {
-      return {};
-    },
-    async clearLogs() {
-      return {};
-    },
-    async exportLogs() {},
-    async setMode() {
-      return {};
-    },
-  };
-
-  bindActions({
-    elements,
-    getState: () => ({ mode: "client", status: "idle" }),
-    setState: () => {},
-    adapter,
-    setActiveTab: () => {},
-    isBusy: () => false,
-    renderLogs: () => {},
-    setWindowState: (snapshot) => {
-      maximizeState = snapshot.maximized;
-    },
-  });
-
-  await emit(elements.windowMinimize, "pointerdown", { stopPropagation() {} });
-  await emit(elements.windowMinimize, "mousedown", { stopPropagation() {} });
-  await emit(elements.windowMinimize, "click");
-  await emit(elements.windowMaximize, "pointerdown", { stopPropagation() {} });
-  await emit(elements.windowMaximize, "mousedown", { stopPropagation() {} });
-  await emit(elements.windowMaximize, "click");
-  await emit(elements.windowClose, "pointerdown", { stopPropagation() {} });
-  await emit(elements.windowClose, "mousedown", { stopPropagation() {} });
-  await emit(elements.windowClose, "click");
-  assert.equal(minimized, 1);
-  assert.equal(maximizeState, true);
-  assert.equal(hidden, 1);
 });

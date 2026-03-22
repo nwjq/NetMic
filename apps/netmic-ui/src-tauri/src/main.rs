@@ -54,6 +54,7 @@ const CLIENT_RECONNECT_MAX_DELAY_MS: u64 = 4_000;
 const TRAY_ID: &str = "netmic-tray";
 const TRAY_MENU_TOGGLE_ID: &str = "tray-toggle-runtime";
 const TRAY_MENU_OPEN_ID: &str = "tray-open-main";
+const TRAY_MENU_HIDE_ID: &str = "tray-hide-main";
 const TRAY_MENU_QUIT_ID: &str = "tray-quit-app";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +350,7 @@ struct TrayHandles {
     _tray: TrayIcon<Wry>,
     toggle_item: CheckMenuItem<Wry>,
     open_item: MenuItem<Wry>,
+    hide_item: MenuItem<Wry>,
     quit_item: MenuItem<Wry>,
 }
 
@@ -767,6 +769,18 @@ fn open_main_window(app: &AppHandle) {
     }
 }
 
+fn hide_main_window_for_app(app: &AppHandle) -> bool {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.hide();
+        }
+        return true;
+    }
+    false
+}
+
 fn hide_main_window(window: &Window) {
     let _ = window.hide();
     #[cfg(target_os = "macos")]
@@ -943,6 +957,7 @@ fn update_tray(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = handles.toggle_item.set_text(toggle_text);
     let _ = handles.toggle_item.set_checked(active);
     let _ = handles.open_item.set_enabled(true);
+    let _ = handles.hide_item.set_enabled(true);
     let _ = handles.quit_item.set_enabled(true);
     let _ = handles._tray.set_tooltip(Some(tooltip));
 }
@@ -953,12 +968,18 @@ fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
             .map_err(|err| format!("创建托盘开关失败：{err}"))?;
     let open_item = MenuItem::with_id(app, TRAY_MENU_OPEN_ID, "打开主窗口", true, None::<&str>)
         .map_err(|err| format!("创建托盘打开项失败：{err}"))?;
+    let hide_item =
+        MenuItem::with_id(app, TRAY_MENU_HIDE_ID, "最小化到后台", true, None::<&str>)
+            .map_err(|err| format!("创建托盘隐藏项失败：{err}"))?;
     let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT_ID, "退出应用", true, None::<&str>)
         .map_err(|err| format!("创建托盘退出项失败：{err}"))?;
     let separator =
         PredefinedMenuItem::separator(app).map_err(|err| format!("创建托盘分隔符失败：{err}"))?;
-    let menu = Menu::with_items(app, &[&toggle_item, &separator, &open_item, &quit_item])
-        .map_err(|err| format!("创建托盘菜单失败：{err}"))?;
+    let menu = Menu::with_items(
+        app,
+        &[&toggle_item, &separator, &open_item, &hide_item, &quit_item],
+    )
+    .map_err(|err| format!("创建托盘菜单失败：{err}"))?;
 
     let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
@@ -970,6 +991,9 @@ fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
                 let _ = toggle_runtime(state, app.clone());
             }
             TRAY_MENU_OPEN_ID => open_main_window(app),
+            TRAY_MENU_HIDE_ID => {
+                let _ = hide_main_window_for_app(app);
+            }
             TRAY_MENU_QUIT_ID => {
                 let state = app.state::<SharedState>().inner().clone();
                 quit_application(&state, app);
@@ -999,6 +1023,7 @@ fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
         _tray: tray,
         toggle_item,
         open_item,
+        hide_item,
         quit_item,
     })
 }
@@ -1048,53 +1073,7 @@ fn set_launch_at_login(state: State<SharedState>, app: AppHandle, enabled: bool)
 
 #[tauri::command]
 fn hide_to_tray(app: AppHandle) -> bool {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-        #[cfg(target_os = "macos")]
-        {
-            let _ = app.hide();
-        }
-        return true;
-    }
-    false
-}
-
-#[tauri::command]
-fn window_minimize(app: AppHandle) -> bool {
-    app.get_webview_window("main")
-        .map(|window| window.minimize().is_ok())
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-fn window_toggle_maximize(app: AppHandle) -> bool {
-    let Some(window) = app.get_webview_window("main") else {
-        return false;
-    };
-    let maximized = window.is_maximized().unwrap_or(false);
-    let result = if maximized {
-        window.unmaximize()
-    } else {
-        window.maximize()
-    };
-    if result.is_err() {
-        return maximized;
-    }
-    !maximized
-}
-
-#[tauri::command]
-fn window_is_maximized(app: AppHandle) -> bool {
-    app.get_webview_window("main")
-        .and_then(|window| window.is_maximized().ok())
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-fn window_start_drag(app: AppHandle) -> bool {
-    app.get_webview_window("main")
-        .map(|window| window.start_dragging().is_ok())
-        .unwrap_or(false)
+    hide_main_window_for_app(&app)
 }
 
 #[tauri::command]
@@ -2518,10 +2497,6 @@ fn main() {
             set_server_config,
             set_launch_at_login,
             hide_to_tray,
-            window_minimize,
-            window_toggle_maximize,
-            window_is_maximized,
-            window_start_drag,
             reset_defaults,
             start,
             stop,

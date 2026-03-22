@@ -1,6 +1,5 @@
 import { WAVEFORM_POINTS, createMockAdapter, defaultSnapshot, isBusy } from "./app.core.js";
 import {
-  renderAppActions,
   renderConfig,
   renderLogs,
   renderStatus,
@@ -21,7 +20,6 @@ let waveformCtx = null;
 let pendingHarnessRenderReport = false;
 let statusPoller = null;
 let closeInterceptorAttached = false;
-let windowState = { maximized: false };
 
 const sampleRates = [16000, 24000, 32000, 44100, 48000];
 const chunkOptions = [10, 20, 40, 60];
@@ -41,10 +39,6 @@ const elements = {
   statusLabel: document.getElementById("status-label"),
   statusNote: document.getElementById("status-note"),
   primaryAction: document.getElementById("primary-action"),
-  windowMinimize: document.getElementById("window-minimize"),
-  windowMaximize: document.getElementById("window-maximize"),
-  windowClose: document.getElementById("window-close"),
-  dragHandles: Array.from(document.querySelectorAll("[data-window-drag-handle]")),
   resetDefaults: document.getElementById("reset-defaults"),
   configConnection: document.getElementById("config-connection"),
   configAudio: document.getElementById("config-audio"),
@@ -89,13 +83,6 @@ const resolveTauriApi = () => {
 
 const createTauriAdapter = (tauriApi) => {
   const { invoke, event, currentWindow } = tauriApi;
-  const invokeWindowCommand = async (command, args = {}) => {
-    try {
-      return await invoke(command, args);
-    } catch (_error) {
-      return null;
-    }
-  };
   return {
     async getStatus() {
       return invoke("get_status");
@@ -114,66 +101,6 @@ const createTauriAdapter = (tauriApi) => {
     },
     async hideToTray() {
       return invoke("hide_to_tray");
-    },
-    async minimizeWindow() {
-      const invoked = await invokeWindowCommand("window_minimize");
-      if (typeof invoked === "boolean") {
-        return invoked;
-      }
-      if (!currentWindow || typeof currentWindow.minimize !== "function") return false;
-      await currentWindow.minimize();
-      return true;
-    },
-    async toggleMaximizeWindow() {
-      const invoked = await invokeWindowCommand("window_toggle_maximize");
-      if (typeof invoked === "boolean") {
-        return invoked;
-      }
-      if (!currentWindow) {
-        return false;
-      }
-      const isMaximized =
-        typeof currentWindow.isMaximized === "function"
-          ? Boolean(await currentWindow.isMaximized())
-          : false;
-      if (isMaximized) {
-        if (typeof currentWindow.unmaximize === "function") {
-          await currentWindow.unmaximize();
-        } else if (typeof currentWindow.toggleMaximize === "function") {
-          await currentWindow.toggleMaximize();
-        } else {
-          return false;
-        }
-        return false;
-      }
-      if (typeof currentWindow.maximize === "function") {
-        await currentWindow.maximize();
-      } else if (typeof currentWindow.toggleMaximize === "function") {
-        await currentWindow.toggleMaximize();
-      } else {
-        return false;
-      }
-      return true;
-    },
-    async isWindowMaximized() {
-      const invoked = await invokeWindowCommand("window_is_maximized");
-      if (typeof invoked === "boolean") {
-        return invoked;
-      }
-      if (!currentWindow || typeof currentWindow.isMaximized !== "function") {
-        return false;
-      }
-      return currentWindow.isMaximized();
-    },
-    async startWindowDrag() {
-      const invoked = await invokeWindowCommand("window_start_drag");
-      if (typeof invoked === "boolean") {
-        return invoked;
-      }
-      if (!currentWindow || typeof currentWindow.startDragging !== "function") {
-        return false;
-      }
-      return currentWindow.startDragging();
     },
     async resetDefaults() {
       return invoke("reset_defaults");
@@ -239,11 +166,6 @@ const activateTauriAdapter = () => {
 };
 
 const getState = () => state;
-
-const setWindowState = (next) => {
-  windowState = { ...windowState, ...next };
-  renderAppActions({ elements, windowState });
-};
 
 const mergeSnapshot = (current, next) => {
   if (!current) return next;
@@ -331,19 +253,6 @@ const registerCloseInterceptor = async () => {
       // 关闭拦截失败时不抛出到 UI 主循环。
     }
   });
-};
-
-const syncWindowState = async () => {
-  if (!adapter.isWindowMaximized) {
-    setWindowState({ maximized: false });
-    return;
-  }
-  try {
-    const maximized = await adapter.isWindowMaximized();
-    setWindowState({ maximized: Boolean(maximized) });
-  } catch (_) {
-    setWindowState({ maximized: false });
-  }
 };
 
 const setState = (snapshot, options = {}) => {
@@ -500,7 +409,6 @@ const render = ({ skipConfig = false } = {}) => {
   renderModeButtons({ state, elements, isBusy });
   renderStatusPill({ state, elements });
   renderPrimaryAction({ state, elements, isBusy });
-  renderAppActions({ elements, windowState });
   if (!skipConfig) {
     renderConfig({
       state,
@@ -560,7 +468,6 @@ const init = async () => {
     setActiveTab,
     isBusy,
     renderLogs: () => renderLogs({ state, elements }),
-    setWindowState,
   });
   setActiveTab(currentTab);
   window.addEventListener("resize", () => {
@@ -571,7 +478,6 @@ const init = async () => {
   // 先注册事件监听，避免错过启动阶段的首个 snapshot。
   registerAdapterListeners();
   await registerCloseInterceptor();
-  await syncWindowState();
 
   try {
     const snapshot = await adapter.getStatus();
