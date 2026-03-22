@@ -27,9 +27,16 @@ class RemoteServerCleanupTests(unittest.TestCase):
             run_m1.remote_start_server(self.env, "/tmp/netmic-phase", 43000)
 
         script = run_remote.call_args.args[1]
+        self.assertIn("cleanup_named_processes()", script)
         self.assertIn("cleanup_port_pids()", script)
+        self.assertIn("ensure_port_released", script)
+        self.assertIn("port_is_free()", script)
+        self.assertIn("UDP port 43000 remains busy after cleanup", script)
         self.assertIn("grep ':43000'", script)
+        self.assertIn("lsof -t -iUDP:43000", script)
         self.assertIn("if ! kill -0 \"$pid\"", script)
+        self.assertIn("failed to bind UDP socket", script)
+        self.assertIn("did not bind UDP port 43000 in time", script)
         self.assertIn("cat /tmp/netmic-phase/runtime.log", script)
 
     def test_remote_stop_server_cleans_pid_file_and_udp_port(self):
@@ -41,8 +48,10 @@ class RemoteServerCleanupTests(unittest.TestCase):
             run_m1.remote_stop_server(self.env, "/tmp/netmic-phase")
 
         script = run_remote.call_args.args[1]
+        self.assertIn("cleanup_named_processes()", script)
         self.assertIn("cleanup_port_pids()", script)
         self.assertIn("grep ':43000'", script)
+        self.assertIn("lsof -t -iUDP:43000", script)
         self.assertIn("rm -f /tmp/netmic-phase/server.pid", script)
 
 

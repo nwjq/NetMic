@@ -112,8 +112,24 @@ stop_pid() {{
   sleep 1
 }}
 
+cleanup_named_processes() {{
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+  pids="$(pgrep -u "$(id -u)" -f '(^|/)netmic-server([[:space:]]|$)|cargo run -p netmic-server' || true)"
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}}
+
 cleanup_port_pids() {{
   if ! command -v ss >/dev/null 2>&1; then
+    if command -v lsof >/dev/null 2>&1; then
+      pids="$(lsof -t -iUDP:{port} 2>/dev/null | sort -u || true)"
+      for pid in $pids; do
+        stop_pid "$pid"
+      done
+    fi
     return 0
   fi
   pids="$(ss -lunp 2>/dev/null | grep ':{port}' | grep -o 'pid=[0-9]\\+' | cut -d= -f2 | sort -u || true)"
@@ -122,12 +138,54 @@ cleanup_port_pids() {{
   done
 }}
 
+port_is_free() {{
+  python3 - <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    sock.bind(("0.0.0.0", {port}))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+}}
+
+describe_port_holders() {{
+  if command -v ss >/dev/null 2>&1; then
+    ss -lunp 2>/dev/null | grep ':{port}' || true
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iUDP:{port} 2>/dev/null || true
+  fi
+}}
+
+ensure_port_released() {{
+  cleanup_named_processes
+  cleanup_port_pids
+  for _ in 1 2 3 4 5; do
+    if port_is_free; then
+      return 0
+    fi
+    cleanup_named_processes
+    cleanup_port_pids
+    sleep 1
+  done
+  echo "UDP port {port} remains busy after cleanup" >&2
+  describe_port_holders >&2
+  return 1
+}}
+
 mkdir -p {remote_dir}
 if [ -f {remote_dir}/server.pid ]; then
   pid="$(cat {remote_dir}/server.pid || true)"
   stop_pid "$pid"
 fi
-cleanup_port_pids
+if ! ensure_port_released; then
+  exit 1
+fi
 rm -f {remote_dir}/server.pid {remote_dir}/runtime.log {remote_dir}/audio_dump.pcm
 nohup env \
   RUST_LOG=info \
@@ -138,13 +196,26 @@ nohup env \
   cargo run -p netmic-server --quiet \
   > {remote_dir}/runtime.log 2>&1 < /dev/null &
 echo $! > {remote_dir}/server.pid
-sleep 1
 pid="$(cat {remote_dir}/server.pid)"
-if ! kill -0 "$pid" >/dev/null 2>&1; then
-  cat {remote_dir}/runtime.log
-  exit 1
-fi
-cat {remote_dir}/server.pid
+for _ in 1 2 3 4 5; do
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    cat {remote_dir}/runtime.log
+    exit 1
+  fi
+  if grep -q "failed to bind UDP socket" {remote_dir}/runtime.log 2>/dev/null; then
+    cat {remote_dir}/runtime.log
+    exit 1
+  fi
+  if ! port_is_free; then
+    cat {remote_dir}/server.pid
+    exit 0
+  fi
+  sleep 1
+done
+echo "netmic-server did not bind UDP port {port} in time" >&2
+describe_port_holders >&2
+cat {remote_dir}/runtime.log 2>/dev/null || true
+exit 1
 """
     return run_m0.run_remote(env, script)
 
@@ -171,8 +242,24 @@ stop_pid() {{
   sleep 1
 }}
 
+cleanup_named_processes() {{
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+  pids="$(pgrep -u "$(id -u)" -f '(^|/)netmic-server([[:space:]]|$)|cargo run -p netmic-server' || true)"
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}}
+
 cleanup_port_pids() {{
   if ! command -v ss >/dev/null 2>&1; then
+    if command -v lsof >/dev/null 2>&1; then
+      pids="$(lsof -t -iUDP:{env.get("NETMIC_HARNESS_SERVER_PORT", "43000") or "43000"} 2>/dev/null | sort -u || true)"
+      for pid in $pids; do
+        stop_pid "$pid"
+      done
+    fi
     return 0
   fi
   pids="$(ss -lunp 2>/dev/null | grep ':{env.get("NETMIC_HARNESS_SERVER_PORT", "43000") or "43000"}' | grep -o 'pid=[0-9]\\+' | cut -d= -f2 | sort -u || true)"
@@ -186,6 +273,7 @@ if [ -f {remote_dir}/server.pid ]; then
   stop_pid "$pid"
   rm -f {remote_dir}/server.pid
 fi
+cleanup_named_processes
 cleanup_port_pids
 """
     return run_m0.run_remote(env, script)
