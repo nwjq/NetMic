@@ -246,6 +246,21 @@ export const renderConfig = ({
     <p>客户端模式下不适用。</p>
   `;
 
+  elements.configApp.innerHTML = `
+    <h3>应用设置</h3>
+    <p>控制后台驻留与系统登录后的启动行为。</p>
+    <label class="toggle">
+      <input type="checkbox" data-app-field="launch_at_login" ${
+        state.app_settings?.launch_at_login ? "checked" : ""
+      } />
+      开机自启（启动后仅驻留后台）
+    </label>
+    <div class="list">
+      <div class="list-item">关闭主窗口时：隐藏到后台，不直接退出。</div>
+      <div class="list-item">托盘主开关：Server 控制监听，Client 控制推流。</div>
+    </div>
+  `;
+
   const fallbackList = state.fallbacks
     .map(
       (item) =>

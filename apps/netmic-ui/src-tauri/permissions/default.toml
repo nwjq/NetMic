@@ -5,6 +5,7 @@ permissions = [
   "allow-set-mode",
   "allow-set-client-config",
   "allow-set-server-config",
+  "allow-set-launch-at-login",
   "allow-reset-defaults",
   "allow-start",
   "allow-stop",

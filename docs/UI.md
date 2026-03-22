@@ -6,7 +6,7 @@
 ## 设计边界
 - UI 仅覆盖 MVP 需求：配置 / 状态 / 日志。
 - 参数安全范围仍以 `MVP.md` 为准；UI 只是输入与提示层。
-- IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `start` / `stop` / `set_mode` / `force_disconnect` / `virtual_mic_create` / `virtual_mic_remove`。
+- IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `set_launch_at_login` / `start` / `stop` / `set_mode` / `force_disconnect` / `virtual_mic_create` / `virtual_mic_remove`。
 - **独立进程模式**：服务端独立运行，UI 通过 UDP 控制面请求状态/发送命令（默认使用 `listen_port`）。为了减少用户心智负担，Server 模式点击“启动监听”会自动拉起服务端进程（若未运行）；可用 `NETMIC_SERVER_BIN` 指定服务端可执行文件路径。编译 UI 时会一并编译 `netmic-server` 与 `netmic-client`，并放在 `target/<profile>/` 供启动与联调。
 
 ## Release / 打包约定
@@ -31,6 +31,7 @@
 - `status_note: String`
 - `client_config: UiClientConfig`
 - `server_config: UiServerConfig`
+- `app_settings: UiAppSettings`
 - `effective: SessionParams`（`netmic-proto`）
 - `fallbacks: UiFallbackEvent[]`
 - `metrics: UiMetrics`
@@ -55,6 +56,9 @@
 - `listen_port: u16`
 - `force_takeover: bool`（默认 false）
 - `virtual_mic_enabled: bool`（默认 true；切换时触发虚拟麦克风创建/移除）
+
+### UiAppSettings（应用级设置）
+- `launch_at_login: bool`
 
 ### UiMetrics（展示指标）
 - `rtt_ms: f32`
@@ -98,6 +102,7 @@
 - `set_mode(mode: String) -> UiSnapshot`
 - `set_client_config(config: UiClientConfig) -> UiSnapshot`
 - `set_server_config(config: UiServerConfig) -> UiSnapshot`
+- `set_launch_at_login(enabled: bool) -> UiSnapshot`
 - `reset_defaults() -> UiSnapshot`
 - `start() -> UiSnapshot`
 - `stop() -> UiSnapshot`
@@ -111,6 +116,19 @@
 - UI 会持久化最近一次的模式与配置（client/server 分离）。
 - 启动时优先读取本地配置，再回退到默认值。
 - 默认路径：`BaseDirectory::AppConfig/netmic-ui.json`
+- `launch_at_login` 属于系统级状态，不写入业务配置文件；启动时由 UI 按当前系统注册状态回填。
+
+## 窗口 / 托盘 / 自启行为
+- 点击主窗口关闭按钮时，不退出应用，而是隐藏到后台。
+- 应用提供托盘（macOS 菜单栏 / Linux 系统托盘）入口。
+- 托盘主开关会根据当前模式切换语义：
+  - `Server` 模式：开关“监听”
+  - `Client` 模式：开关“推流”
+- 托盘提供两个独立动作：`打开主窗口`、`退出应用`。
+- 设置页提供“开机自启（启动后仅驻留后台）”勾选项。
+- 开启开机自启后，应用在登录时会带 `--autostart` 启动，并默认隐藏主窗口，仅后台驻留。
+- macOS 自启通过 `~/Library/LaunchAgents/<bundle-id>.plist` 注册。
+- Linux 自启通过 `${XDG_CONFIG_HOME:-~/.config}/autostart/<bundle-id>.desktop` 注册。
 
 ## 服务端状态联动（独立进程）
 UI 在 Server 模式下通过 UDP 控制面轮询：

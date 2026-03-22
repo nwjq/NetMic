@@ -43,6 +43,7 @@ const elements = {
   configAudio: document.getElementById("config-audio"),
   configClient: document.getElementById("config-client"),
   configServer: document.getElementById("config-server"),
+  configApp: document.getElementById("config-app"),
   configFallbacks: document.getElementById("config-fallbacks"),
   statusConnection: document.getElementById("status-connection"),
   statusMetrics: document.getElementById("status-metrics"),
@@ -87,6 +88,9 @@ const createTauriAdapter = (tauriApi) => {
     },
     async setServerConfig(config) {
       return invoke("set_server_config", { config });
+    },
+    async setLaunchAtLogin(enabled) {
+      return invoke("set_launch_at_login", { enabled });
     },
     async resetDefaults() {
       return invoke("reset_defaults");

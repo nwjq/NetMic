@@ -20,14 +20,18 @@ use std::env;
 use std::fs;
 use std::io::ErrorKind;
 use std::net::UdpSocket;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State, Window, WindowEvent, Wry};
 
 const EVENT_SNAPSHOT: &str = "netmic://snapshot";
 const EVENT_WAVEFORM: &str = "netmic://waveform";
+const AUTOSTART_ARG: &str = "--autostart";
 const SERVER_STATUS_POLL_MS: u64 = 1_000;
 const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
 const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
@@ -44,6 +48,10 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 const CLIENT_SERVER_TIMEOUT_MULTIPLIER: u64 = 3;
 const CLIENT_RECONNECT_BASE_DELAY_MS: u64 = 1_000;
 const CLIENT_RECONNECT_MAX_DELAY_MS: u64 = 4_000;
+const TRAY_ID: &str = "netmic-tray";
+const TRAY_MENU_TOGGLE_ID: &str = "tray-toggle-runtime";
+const TRAY_MENU_OPEN_ID: &str = "tray-open-main";
+const TRAY_MENU_QUIT_ID: &str = "tray-quit-app";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiClientConfig {
@@ -65,6 +73,11 @@ struct UiServerConfig {
     listen_port: u16,
     force_takeover: bool,
     virtual_mic_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UiAppSettings {
+    launch_at_login: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +300,7 @@ struct UiSnapshot {
     status_note: String,
     client_config: UiClientConfig,
     server_config: UiServerConfig,
+    app_settings: UiAppSettings,
     effective: SessionParams,
     fallbacks: Vec<UiFallbackEvent>,
     metrics: UiMetrics,
@@ -327,6 +341,15 @@ struct PersistedState {
     client_config: UiClientConfig,
     server_config: UiServerConfig,
 }
+
+struct TrayHandles {
+    _tray: TrayIcon<Wry>,
+    toggle_item: CheckMenuItem<Wry>,
+    open_item: MenuItem<Wry>,
+    quit_item: MenuItem<Wry>,
+}
+
+struct ExitRequested(AtomicBool);
 
 struct AppState {
     snapshot: UiSnapshot,
@@ -403,6 +426,9 @@ impl AppState {
             status_note: "准备就绪".to_string(),
             client_config,
             server_config,
+            app_settings: UiAppSettings {
+                launch_at_login: false,
+            },
             effective: default_params,
             fallbacks: Vec::new(),
             metrics: UiMetrics {
@@ -465,6 +491,7 @@ impl AppState {
         let persisted = read_persisted_state(&persist_path);
         let mut state = AppState::new_with_path(persist_path, persisted);
         state.update_effective();
+        state.snapshot.app_settings.launch_at_login = system_launch_at_login_enabled(app);
         state
     }
 
@@ -589,6 +616,149 @@ fn write_persisted_state(path: &PathBuf, state: &PersistedState) -> Result<(), S
     let payload =
         serde_json::to_vec_pretty(state).map_err(|err| format!("配置序列化失败：{err}"))?;
     fs::write(path, payload).map_err(|err| format!("配置写入失败：{err}"))
+}
+
+fn launched_from_autostart() -> bool {
+    env::args().any(|arg| arg == AUTOSTART_ARG)
+}
+
+fn is_runtime_active(snapshot: &UiSnapshot) -> bool {
+    matches!(
+        snapshot.status.as_str(),
+        "connecting" | "streaming" | "listening" | "connected"
+    )
+}
+
+fn tray_toggle_label(mode: &str) -> &'static str {
+    if mode == "server" {
+        "监听"
+    } else {
+        "推流"
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env_trimmed("HOME").map(PathBuf::from)
+}
+
+fn escape_xml(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn escape_desktop_exec_token(raw: &str) -> String {
+    raw.chars()
+        .flat_map(|ch| match ch {
+            ' ' | '\t' | '\n' | '"' | '\'' | '\\' => ['\\', ch].into_iter().collect::<Vec<_>>(),
+            _ => [ch].into_iter().collect(),
+        })
+        .collect()
+}
+
+fn launch_at_login_path(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return home_dir().map(|home| {
+            home.join("Library")
+                .join("LaunchAgents")
+                .join(format!("{}.plist", app.config().identifier))
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let config_home = env_trimmed("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home_dir().map(|home| home.join(".config")));
+        return config_home.map(|dir| {
+            dir.join("autostart")
+                .join(format!("{}.desktop", app.config().identifier))
+        });
+    }
+
+    #[allow(unreachable_code)]
+    None
+}
+
+fn build_launch_agent_plist(label: &str, exe_path: &Path) -> String {
+    let exe = escape_xml(&exe_path.to_string_lossy());
+    let arg = escape_xml(AUTOSTART_ARG);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>{exe}</string>
+      <string>{arg}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>
+"#
+    )
+}
+
+fn build_linux_autostart_entry(name: &str, exe_path: &Path) -> String {
+    let exe = escape_desktop_exec_token(&exe_path.to_string_lossy());
+    let arg = escape_desktop_exec_token(AUTOSTART_ARG);
+    format!(
+        "[Desktop Entry]\nType=Application\nVersion=1.0\nName={name}\nExec={exe} {arg}\nTerminal=false\nHidden=false\nX-GNOME-Autostart-enabled=true\n"
+    )
+}
+
+fn system_launch_at_login_enabled(app: &AppHandle) -> bool {
+    launch_at_login_path(app)
+        .map(|path| path.exists())
+        .unwrap_or(false)
+}
+
+fn set_system_launch_at_login(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let path = launch_at_login_path(app).ok_or_else(|| "当前平台暂不支持开机自启".to_string())?;
+    let exe_path = env::current_exe().map_err(|err| format!("读取当前可执行文件失败：{err}"))?;
+
+    if enabled {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("创建自启动目录失败：{err}"))?;
+        }
+        let payload = if cfg!(target_os = "macos") {
+            build_launch_agent_plist(&app.config().identifier, &exe_path)
+        } else {
+            build_linux_autostart_entry(&app.package_info().name, &exe_path)
+        };
+        fs::write(&path, payload).map_err(|err| format!("写入自启动配置失败：{err}"))?;
+    } else if path.exists() {
+        fs::remove_file(&path).map_err(|err| format!("移除自启动配置失败：{err}"))?;
+    }
+
+    Ok(())
+}
+
+fn open_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.show();
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn hide_main_window(window: &Window) {
+    let _ = window.hide();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.app_handle().hide();
+    }
 }
 
 fn env_trimmed(name: &str) -> Option<String> {
@@ -717,6 +887,108 @@ fn maybe_start_harness_autostart(app: &AppHandle) {
     });
 }
 
+fn stop_runtime(state: &SharedState, app: &AppHandle) -> UiSnapshot {
+    let snapshot = apply_stop(state);
+    emit_snapshot(app, &snapshot);
+    stop_server_process_if_needed(state);
+    let snapshot = { state.lock().expect("state lock").snapshot.clone() };
+    emit_snapshot(app, &snapshot);
+    snapshot
+}
+
+fn toggle_runtime(state: SharedState, app: AppHandle) -> UiSnapshot {
+    let snapshot = { state.lock().expect("state lock").snapshot.clone() };
+    if is_runtime_active(&snapshot) {
+        stop_runtime(&state, &app)
+    } else {
+        start_runtime(state, app)
+    }
+}
+
+fn quit_application(state: &SharedState, app: &AppHandle) {
+    app.state::<ExitRequested>()
+        .0
+        .store(true, Ordering::Relaxed);
+    stop_server_process_if_needed(state);
+    app.exit(0);
+}
+
+fn update_tray(app: &AppHandle, snapshot: &UiSnapshot) {
+    let handles = app.state::<TrayHandles>();
+    let active = is_runtime_active(snapshot);
+    let toggle_text = tray_toggle_label(&snapshot.mode);
+    let tooltip = format!(
+        "NetMic · {} · {}",
+        if snapshot.mode == "server" {
+            "Server"
+        } else {
+            "Client"
+        },
+        snapshot.status_note
+    );
+    let _ = handles.toggle_item.set_text(toggle_text);
+    let _ = handles.toggle_item.set_checked(active);
+    let _ = handles.open_item.set_enabled(true);
+    let _ = handles.quit_item.set_enabled(true);
+    let _ = handles._tray.set_tooltip(Some(tooltip));
+}
+
+fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
+    let toggle_item =
+        CheckMenuItem::with_id(app, TRAY_MENU_TOGGLE_ID, "推流", true, false, None::<&str>)
+            .map_err(|err| format!("创建托盘开关失败：{err}"))?;
+    let open_item = MenuItem::with_id(app, TRAY_MENU_OPEN_ID, "打开主窗口", true, None::<&str>)
+        .map_err(|err| format!("创建托盘打开项失败：{err}"))?;
+    let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT_ID, "退出应用", true, None::<&str>)
+        .map_err(|err| format!("创建托盘退出项失败：{err}"))?;
+    let separator =
+        PredefinedMenuItem::separator(app).map_err(|err| format!("创建托盘分隔符失败：{err}"))?;
+    let menu = Menu::with_items(app, &[&toggle_item, &separator, &open_item, &quit_item])
+        .map_err(|err| format!("创建托盘菜单失败：{err}"))?;
+
+    let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .tooltip("NetMic")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_MENU_TOGGLE_ID => {
+                let state = app.state::<SharedState>().inner().clone();
+                let _ = toggle_runtime(state, app.clone());
+            }
+            TRAY_MENU_OPEN_ID => open_main_window(app),
+            TRAY_MENU_QUIT_ID => {
+                let state = app.state::<SharedState>().inner().clone();
+                quit_application(&state, app);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                open_main_window(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray_builder = tray_builder.icon(icon).icon_as_template(true);
+    }
+
+    let tray = tray_builder
+        .build(app)
+        .map_err(|err| format!("创建托盘失败：{err}"))?;
+
+    Ok(TrayHandles {
+        _tray: tray,
+        toggle_item,
+        open_item,
+        quit_item,
+    })
+}
+
 #[tauri::command]
 fn get_status(state: State<SharedState>) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
@@ -749,6 +1021,13 @@ fn set_server_config(
     config: UiServerConfig,
 ) -> UiSnapshot {
     let snapshot = apply_set_server_config(state.inner(), config);
+    emit_snapshot(&app, &snapshot);
+    snapshot
+}
+
+#[tauri::command]
+fn set_launch_at_login(state: State<SharedState>, app: AppHandle, enabled: bool) -> UiSnapshot {
+    let snapshot = apply_set_launch_at_login(state.inner(), &app, enabled);
     emit_snapshot(&app, &snapshot);
     snapshot
 }
@@ -821,15 +1100,7 @@ fn start(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 
 #[tauri::command]
 fn stop(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
-    let snapshot = apply_stop(state.inner());
-    emit_snapshot(&app, &snapshot);
-    stop_server_process_if_needed(state.inner());
-    let snapshot = {
-        let guard = state.lock().expect("state lock");
-        guard.snapshot.clone()
-    };
-    emit_snapshot(&app, &snapshot);
-    snapshot
+    stop_runtime(state.inner(), &app)
 }
 
 #[tauri::command]
@@ -1908,6 +2179,30 @@ fn apply_set_server_config(state: &SharedState, config: UiServerConfig) -> UiSna
     guard.snapshot.clone()
 }
 
+fn apply_set_launch_at_login(state: &SharedState, app: &AppHandle, enabled: bool) -> UiSnapshot {
+    let mut guard = state.lock().expect("state lock");
+    match set_system_launch_at_login(app, enabled) {
+        Ok(()) => {
+            guard.snapshot.app_settings.launch_at_login = system_launch_at_login_enabled(app);
+            guard.snapshot.runtime.last_error = None;
+            let enabled_now = guard.snapshot.app_settings.launch_at_login;
+            guard.push_log(
+                "info",
+                if enabled_now {
+                    "已开启开机自启"
+                } else {
+                    "已关闭开机自启"
+                },
+            );
+        }
+        Err(err) => {
+            guard.snapshot.runtime.last_error = Some(err.clone());
+            guard.push_log("error", format!("切换开机自启失败：{err}"));
+        }
+    }
+    guard.snapshot.clone()
+}
+
 fn apply_reset_defaults(state: &SharedState) -> UiSnapshot {
     let mut guard = state.lock().expect("state lock");
     let default_params = SessionParams::mvp_default();
@@ -2043,6 +2338,7 @@ fn apply_server_command(
 
 fn emit_snapshot(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = app.emit(EVENT_SNAPSHOT, snapshot.clone());
+    update_tray(app, snapshot);
     maybe_write_harness_snapshot(snapshot);
 }
 
@@ -2111,9 +2407,42 @@ fn build_waveform(samples: &[i16], points: usize) -> (Vec<f32>, f32, u32) {
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let exit_requested = window
+                    .app_handle()
+                    .state::<ExitRequested>()
+                    .0
+                    .load(Ordering::Relaxed);
+                if !exit_requested {
+                    api.prevent_close();
+                    hide_main_window(window);
+                }
+            }
+        })
         .setup(|app| {
             let state = AppState::load_or_default(app.handle());
             app.manage(Arc::new(Mutex::new(state)));
+            app.manage(ExitRequested(AtomicBool::new(false)));
+            let tray = create_tray(app.handle())?;
+            app.manage(tray);
+            let snapshot = {
+                app.state::<SharedState>()
+                    .lock()
+                    .expect("state lock")
+                    .snapshot
+                    .clone()
+            };
+            update_tray(app.handle(), &snapshot);
+            if launched_from_autostart() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = app.hide();
+                    }
+                }
+            }
             maybe_start_harness_autostart(app.handle());
             Ok(())
         })
@@ -2122,6 +2451,7 @@ fn main() {
             set_mode,
             set_client_config,
             set_server_config,
+            set_launch_at_login,
             reset_defaults,
             start,
             stop,
@@ -2298,6 +2628,37 @@ mod tests {
         assert_eq!(points.len(), 2);
         assert_eq!(peak, i16::MAX as u32);
         assert!((rms - 0.707).abs() < 0.02);
+    }
+
+    #[test]
+    fn launch_agent_plist_contains_autostart_exec() {
+        let payload = build_launch_agent_plist(
+            "io.netmic.app",
+            Path::new("/Applications/NetMic.app/Contents/MacOS/netmic-ui"),
+        );
+
+        assert!(payload.contains("<string>io.netmic.app</string>"));
+        assert!(
+            payload.contains("<string>/Applications/NetMic.app/Contents/MacOS/netmic-ui</string>")
+        );
+        assert!(payload.contains("<string>--autostart</string>"));
+        assert!(payload.contains("<key>RunAtLoad</key>"));
+    }
+
+    #[test]
+    fn linux_autostart_entry_contains_exec_and_flag() {
+        let payload =
+            build_linux_autostart_entry("NetMic", Path::new("/opt/NetMic Bundle/netmic-ui"));
+
+        assert!(payload.contains("Name=NetMic"));
+        assert!(payload.contains("Exec=/opt/NetMic\\ Bundle/netmic-ui --autostart"));
+        assert!(payload.contains("X-GNOME-Autostart-enabled=true"));
+    }
+
+    #[test]
+    fn tray_toggle_label_matches_mode() {
+        assert_eq!(tray_toggle_label("server"), "监听");
+        assert_eq!(tray_toggle_label("client"), "推流");
     }
 
     #[test]

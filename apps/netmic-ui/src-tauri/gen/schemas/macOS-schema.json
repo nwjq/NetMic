@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`",
+          "description": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-set-launch-at-login`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`"
+          "markdownDescription": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-set-launch-at-login`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`"
         },
         {
           "description": "允许清空运行日志。",
@@ -223,6 +223,12 @@
           "type": "string",
           "const": "allow-set-client-config",
           "markdownDescription": "允许写入客户端配置。"
+        },
+        {
+          "description": "允许切换开机自启。",
+          "type": "string",
+          "const": "allow-set-launch-at-login",
+          "markdownDescription": "允许切换开机自启。"
         },
         {
           "description": "允许切换 NetMic UI 的工作模式。",

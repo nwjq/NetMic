@@ -19,6 +19,11 @@ description = "允许写入服务端配置。"
 commands.allow = ["set_server_config"]
 
 [[permission]]
+identifier = "allow-set-launch-at-login"
+description = "允许切换开机自启。"
+commands.allow = ["set_launch_at_login"]
+
+[[permission]]
 identifier = "allow-reset-defaults"
 description = "允许恢复默认配置。"
 commands.allow = ["reset_defaults"]

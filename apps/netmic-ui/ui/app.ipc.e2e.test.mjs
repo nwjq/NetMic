@@ -82,6 +82,16 @@ const createTauriStub = () => {
         };
         return { ...snapshot };
       }
+      case "set_launch_at_login": {
+        snapshot = {
+          ...snapshot,
+          app_settings: {
+            ...snapshot.app_settings,
+            launch_at_login: Boolean(args.enabled),
+          },
+        };
+        return { ...snapshot };
+      }
       case "reset_defaults": {
         snapshot = defaultSnapshot();
         return { ...snapshot };

@@ -22,6 +22,14 @@ const createInput = ({ field, type = "text", value = "" }) => ({
   ...createEmitter(),
 });
 
+const createAppInput = ({ field, type = "checkbox" }) => ({
+  dataset: { appField: field },
+  type,
+  value: "on",
+  checked: false,
+  ...createEmitter(),
+});
+
 test("bindActions triggers mode change when idle", async () => {
   const elements = {
     modeButtons: [createButton({ mode: "client" }), createButton({ mode: "server" })],
@@ -174,14 +182,18 @@ test("bindActions toggles start/stop via primaryAction", async () => {
 test("bindConfigInputs converts number and checkbox values", async () => {
   const numberInput = createInput({ field: "server_port", type: "number", value: "43001" });
   const checkboxInput = createInput({ field: "auto_reconnect", type: "checkbox", value: "on" });
+  const appCheckbox = createAppInput({ field: "launch_at_login" });
   checkboxInput.checked = false;
+  appCheckbox.checked = false;
 
   const root = {
-    querySelectorAll: () => [numberInput, checkboxInput],
+    querySelectorAll: (selector) =>
+      selector === "[data-app-field]" ? [appCheckbox] : [numberInput, checkboxInput],
     getElementById: () => null,
   };
 
   let receivedConfig = null;
+  let launchAtLoginValue = null;
   const state = {
     mode: "client",
     client_config: { server_port: 43000, auto_reconnect: true },
@@ -195,6 +207,10 @@ test("bindConfigInputs converts number and checkbox values", async () => {
     async setServerConfig(config) {
       receivedConfig = config;
       return { server_config: config };
+    },
+    async setLaunchAtLogin(enabled) {
+      launchAtLoginValue = enabled;
+      return { app_settings: { launch_at_login: enabled } };
     },
     async forceDisconnect() {
       return {};
@@ -214,6 +230,10 @@ test("bindConfigInputs converts number and checkbox values", async () => {
   checkboxInput.checked = true;
   await checkboxInput.handlers.change({ target: checkboxInput });
   assert.equal(receivedConfig.auto_reconnect, true);
+
+  appCheckbox.checked = true;
+  await appCheckbox.handlers.change({ target: appCheckbox });
+  assert.equal(launchAtLoginValue, true);
 });
 
 test("bindConfigInputs triggers forceDisconnect", async () => {
@@ -228,6 +248,9 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
       return {};
     },
     async setServerConfig() {
+      return {};
+    },
+    async setLaunchAtLogin() {
       return {};
     },
     async forceDisconnect() {

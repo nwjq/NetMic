@@ -51,6 +51,7 @@ const createConfigElements = () => ({
   configAudio: { innerHTML: "" },
   configClient: { innerHTML: "" },
   configServer: { innerHTML: "" },
+  configApp: { innerHTML: "" },
   configFallbacks: { innerHTML: "" },
 });
 
@@ -249,6 +250,9 @@ test("renderConfig switches between client/server forms", () => {
       force_takeover: false,
       virtual_mic_enabled: false,
     },
+    app_settings: {
+      launch_at_login: true,
+    },
     devices: { input: ["系统默认", "USB Mic"] },
     runtime: { mic_permission: "已授权", virtual_mic_name: "NetMic Virtual Mic" },
     fallbacks: [],
@@ -265,6 +269,8 @@ test("renderConfig switches between client/server forms", () => {
   assert.ok(elements.configConnection.innerHTML.includes("10.0.0.9"));
   assert.ok(elements.configAudio.innerHTML.includes("Opus"));
   assert.ok(elements.configClient.innerHTML.includes("输入设备"));
+  assert.ok(elements.configApp.innerHTML.includes("开机自启"));
+  assert.ok(elements.configApp.innerHTML.includes("隐藏到后台"));
 
   state.mode = "server";
   renderConfig({
@@ -277,4 +283,5 @@ test("renderConfig switches between client/server forms", () => {
   });
   assert.ok(elements.configConnection.innerHTML.includes("监听端口"));
   assert.ok(elements.configConnection.innerHTML.includes("disabled"));
+  assert.ok(elements.configApp.innerHTML.includes("托盘主开关"));
 });

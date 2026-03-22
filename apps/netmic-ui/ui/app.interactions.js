@@ -30,6 +30,16 @@ export const bindConfigInputs = ({ root, getState, setState, adapter }) => {
     });
   });
 
+  root.querySelectorAll("[data-app-field]").forEach((input) => {
+    input.addEventListener("change", async (event) => {
+      const target = event.target;
+      const field = target.dataset.appField;
+      if (field !== "launch_at_login") return;
+      const snapshot = await adapter.setLaunchAtLogin(Boolean(target.checked));
+      setState(snapshot);
+    });
+  });
+
   const forceButton = root.getElementById ? root.getElementById("force-disconnect") : null;
   if (forceButton) {
     forceButton.addEventListener("click", async () => {

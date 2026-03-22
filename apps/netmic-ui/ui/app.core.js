@@ -25,6 +25,9 @@ export const defaultSnapshot = () => ({
     force_takeover: false,
     virtual_mic_enabled: true,
   },
+  app_settings: {
+    launch_at_login: false,
+  },
   effective: {
     codec: "opus",
     sample_rate_hz: 48000,
@@ -207,8 +210,22 @@ export const createMockAdapter = () => {
       emit();
       return deepClone(mockState);
     },
+    async setLaunchAtLogin(enabled) {
+      mockState.app_settings = {
+        ...mockState.app_settings,
+        launch_at_login: Boolean(enabled),
+      };
+      pushLog(
+        "info",
+        mockState.app_settings.launch_at_login ? "已开启开机自启（模拟）" : "已关闭开机自启（模拟）"
+      );
+      emit();
+      return deepClone(mockState);
+    },
     async resetDefaults() {
+      const preservedSettings = deepClone(mockState.app_settings);
       mockState = defaultSnapshot();
+      mockState.app_settings = preservedSettings;
       pushLog("info", "已恢复默认配置（模拟）");
       emit();
       return deepClone(mockState);
