@@ -25,6 +25,7 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -962,6 +963,18 @@ fn update_tray(app: &AppHandle, snapshot: &UiSnapshot) {
     let _ = handles._tray.set_tooltip(Some(tooltip));
 }
 
+fn load_tray_icon(_app: &AppHandle) -> Option<Image<'static>> {
+    #[cfg(target_os = "macos")]
+    {
+        return Image::from_bytes(include_bytes!("../icons/tray-template.png")).ok();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        _app.default_window_icon().cloned()
+    }
+}
+
 fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
     let toggle_item =
         CheckMenuItem::with_id(app, TRAY_MENU_TOGGLE_ID, "推流", true, false, None::<&str>)
@@ -1011,8 +1024,12 @@ fn create_tray(app: &AppHandle) -> Result<TrayHandles, String> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray_builder = tray_builder.icon(icon).icon_as_template(true);
+    if let Some(icon) = load_tray_icon(app) {
+        tray_builder = tray_builder.icon(icon);
+        #[cfg(target_os = "macos")]
+        {
+            tray_builder = tray_builder.icon_as_template(true);
+        }
     }
 
     let tray = tray_builder
