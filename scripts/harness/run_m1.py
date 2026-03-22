@@ -141,21 +141,6 @@ cleanup_port_pids() {{
   done
 }}
 
-port_is_free() {{
-  python3 - <<'PY'
-import socket
-import sys
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-try:
-    sock.bind(("0.0.0.0", {port}))
-except OSError:
-    sys.exit(1)
-finally:
-    sock.close()
-PY
-}}
-
 describe_port_holders() {{
   if command -v ss >/dev/null 2>&1; then
     ss -lunp 2>/dev/null | grep ':{port}' || true
@@ -165,11 +150,37 @@ describe_port_holders() {{
   fi
 }}
 
+port_is_busy() {{
+  if command -v ss >/dev/null 2>&1; then
+    if ss -lunp 2>/dev/null | grep -q ':{port}'; then
+      return 0
+    fi
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    if lsof -t -iUDP:{port} >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  python3 - <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    sock.bind(("0.0.0.0", {port}))
+except OSError:
+    sys.exit(0)
+finally:
+    sock.close()
+sys.exit(1)
+PY
+}}
+
 ensure_port_released() {{
   cleanup_named_processes
   cleanup_port_pids
   for _ in 1 2 3 4 5; do
-    if port_is_free; then
+    if ! port_is_busy; then
       return 0
     fi
     cleanup_named_processes
@@ -209,7 +220,7 @@ for _ in 1 2 3 4 5; do
     cat {remote_dir}/runtime.log
     exit 1
   fi
-  if ! port_is_free; then
+  if port_is_busy; then
     cat {remote_dir}/server.pid
     exit 0
   fi
