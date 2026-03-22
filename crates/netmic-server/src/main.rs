@@ -220,15 +220,46 @@ mod tests {
     }
 
     #[test]
-    fn adapt_pcm16_channels_duplicates_mono_samples_for_stereo_sink() {
+    fn adapt_pcm16_for_sink_duplicates_mono_samples_for_stereo_s16_sink() {
         let payload = [0x34, 0x12, 0x78, 0x56];
 
-        let expanded = adapt_pcm16_channels(&payload, 1, 2).expect("expand mono");
+        let expanded = adapt_pcm16_for_sink(
+            &payload,
+            1,
+            &PulseSinkSpec {
+                format: PulseSampleFormat::S16le,
+                channels: 2,
+                rate_hz: 48_000,
+            },
+        )
+        .expect("expand mono");
 
         assert_eq!(
             expanded,
             vec![0x34, 0x12, 0x34, 0x12, 0x78, 0x56, 0x78, 0x56]
         );
+    }
+
+    #[test]
+    fn adapt_pcm16_for_sink_converts_to_float32_when_required() {
+        let payload = [0xFF, 0x7F];
+
+        let expanded = adapt_pcm16_for_sink(
+            &payload,
+            1,
+            &PulseSinkSpec {
+                format: PulseSampleFormat::Float32le,
+                channels: 2,
+                rate_hz: 48_000,
+            },
+        )
+        .expect("convert float");
+
+        assert_eq!(expanded.len(), 8);
+        let left = f32::from_le_bytes(expanded[0..4].try_into().expect("left"));
+        let right = f32::from_le_bytes(expanded[4..8].try_into().expect("right"));
+        assert!(left > 0.99);
+        assert!((left - right).abs() < 0.0001);
     }
 }
 
@@ -743,11 +774,33 @@ impl AudioSink for NullSink {
     }
 }
 
+#[derive(Clone, Copy)]
+enum PulseSampleFormat {
+    S16le,
+    Float32le,
+}
+
+impl PulseSampleFormat {
+    fn from_pactl(raw: &str) -> Option<Self> {
+        match raw {
+            "s16le" => Some(Self::S16le),
+            "float32le" => Some(Self::Float32le),
+            _ => None,
+        }
+    }
+}
+
+struct PulseSinkSpec {
+    format: PulseSampleFormat,
+    channels: u16,
+    rate_hz: u32,
+}
+
 #[cfg(target_os = "linux")]
 struct PulseAudioSink {
     simple: libpulse_simple_binding::Simple,
     input_channels: u16,
-    output_channels: u16,
+    output_spec: PulseSinkSpec,
     scratch: Vec<u8>,
 }
 
@@ -757,15 +810,24 @@ impl PulseAudioSink {
         use libpulse_binding::sample::{Format, Spec};
         use libpulse_binding::stream::Direction;
 
-        let output_channels = pulse_sink_channel_count(sink_name).unwrap_or(channels);
+        let output_spec = pulse_sink_spec(sink_name).unwrap_or(PulseSinkSpec {
+            format: PulseSampleFormat::S16le,
+            channels,
+            rate_hz: sample_rate_hz,
+        });
         let spec = Spec {
-            format: Format::S16le,
-            channels: output_channels as u8,
-            rate: sample_rate_hz,
+            format: match output_spec.format {
+                PulseSampleFormat::S16le => Format::S16le,
+                PulseSampleFormat::Float32le => Format::F32le,
+            },
+            channels: output_spec.channels as u8,
+            rate: output_spec.rate_hz,
         };
         if !spec.is_valid() {
             return Err(anyhow::anyhow!(
-                "invalid pulse sample spec: rate={sample_rate_hz}, channels={output_channels}"
+                "invalid pulse sample spec: rate={}, channels={}",
+                output_spec.rate_hz,
+                output_spec.channels
             ));
         }
         let simple = libpulse_simple_binding::Simple::new(
@@ -782,7 +844,7 @@ impl PulseAudioSink {
         Ok(Self {
             simple,
             input_channels: channels,
-            output_channels,
+            output_spec,
             scratch: Vec::new(),
         })
     }
@@ -791,11 +853,12 @@ impl PulseAudioSink {
 #[cfg(target_os = "linux")]
 impl AudioSink for PulseAudioSink {
     fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize> {
-        let write_buf = if self.input_channels == self.output_channels {
+        let write_buf = if self.input_channels == self.output_spec.channels
+            && matches!(self.output_spec.format, PulseSampleFormat::S16le)
+        {
             payload
         } else {
-            self.scratch =
-                adapt_pcm16_channels(payload, self.input_channels, self.output_channels)?;
+            self.scratch = adapt_pcm16_for_sink(payload, self.input_channels, &self.output_spec)?;
             &self.scratch
         };
         self.simple
@@ -1311,7 +1374,7 @@ fn source_exists(name: &str) -> Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn pulse_sink_channel_count(name: &str) -> Option<u16> {
+fn pulse_sink_spec(name: &str) -> Option<PulseSinkSpec> {
     let output = Command::new("pactl")
         .args(["list", "short", "sinks"])
         .output()
@@ -1322,21 +1385,30 @@ fn pulse_sink_channel_count(name: &str) -> Option<u16> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 5 || parts[1] != name {
+        if parts.len() < 6 || parts[1] != name {
             continue;
         }
-        return parts[4].strip_suffix("ch")?.parse::<u16>().ok();
+        return Some(PulseSinkSpec {
+            format: PulseSampleFormat::from_pactl(parts[3])?,
+            channels: parts[4].strip_suffix("ch")?.parse::<u16>().ok()?,
+            rate_hz: parts[5].strip_suffix("Hz")?.parse::<u32>().ok()?,
+        });
     }
     None
 }
 
-fn adapt_pcm16_channels(payload: &[u8], input_channels: u16, output_channels: u16) -> Result<Vec<u8>> {
-    if input_channels == output_channels {
+fn adapt_pcm16_for_sink(
+    payload: &[u8],
+    input_channels: u16,
+    output_spec: &PulseSinkSpec,
+) -> Result<Vec<u8>> {
+    if input_channels == output_spec.channels && matches!(output_spec.format, PulseSampleFormat::S16le) {
         return Ok(payload.to_vec());
     }
-    if input_channels != 1 || output_channels < 1 {
+    if input_channels != 1 || output_spec.channels < 1 {
         return Err(anyhow::anyhow!(
-            "unsupported pcm16 channel adaptation: {input_channels} -> {output_channels}"
+            "unsupported pcm16 sink adaptation: {input_channels} -> {}ch",
+            output_spec.channels
         ));
     }
     if payload.len() % 2 != 0 {
@@ -1346,10 +1418,24 @@ fn adapt_pcm16_channels(payload: &[u8], input_channels: u16, output_channels: u1
         ));
     }
 
-    let mut expanded = Vec::with_capacity(payload.len() * output_channels as usize);
+    let mut expanded = Vec::new();
     for sample in payload.chunks_exact(2) {
-        for _ in 0..output_channels {
-            expanded.extend_from_slice(sample);
+        let pcm16 = i16::from_le_bytes([sample[0], sample[1]]);
+        match output_spec.format {
+            PulseSampleFormat::S16le => {
+                expanded.reserve(output_spec.channels as usize * 2);
+                for _ in 0..output_spec.channels {
+                    expanded.extend_from_slice(&pcm16.to_le_bytes());
+                }
+            }
+            PulseSampleFormat::Float32le => {
+                expanded.reserve(output_spec.channels as usize * 4);
+                let normalized = (pcm16 as f32) / (i16::MAX as f32);
+                let float_bytes = normalized.to_le_bytes();
+                for _ in 0..output_spec.channels {
+                    expanded.extend_from_slice(&float_bytes);
+                }
+            }
         }
     }
     Ok(expanded)
