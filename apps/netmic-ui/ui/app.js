@@ -347,7 +347,8 @@ const collectHarnessVisibleState = () => ({
 });
 
 const reportHarnessRender = () => {
-  if (!hasTauri || !adapter.reportHarnessRender || pendingHarnessRenderReport) return;
+  if ((!hasTauri || !adapter.reportHarnessRender) && !activateTauriAdapter()) return;
+  if (!adapter.reportHarnessRender || pendingHarnessRenderReport) return;
   pendingHarnessRenderReport = true;
   scheduleAfterRender(() => {
     pendingHarnessRenderReport = false;
@@ -399,8 +400,9 @@ const registerAdapterListeners = () => {
 };
 
 const startStatusPoller = () => {
-  if (!hasTauri || !adapter.getStatus || statusPoller) return;
+  if (statusPoller) return;
   statusPoller = scheduleInterval(async () => {
+    if ((!hasTauri || !adapter.getStatus) && !activateTauriAdapter()) return;
     if (getState().mode !== "client") return;
     try {
       const snapshot = await adapter.getStatus();
@@ -435,17 +437,39 @@ const init = async () => {
     const snapshot = await adapter.getStatus();
     setState(snapshot);
   } catch (err) {
-    adapter = createMockAdapter();
-    registerAdapterListeners();
-    const snapshot = await adapter.getStatus();
-    setState(snapshot);
-    state.logs.unshift({
-      ts_ms: Date.now(),
-      level: "error",
-      message: `Tauri IPC 初始化失败，已切换模拟模式：${String(err)}`,
-    });
-    state.logs = state.logs.slice(0, 200);
-    render();
+    const recovered = await waitForTauriAdapter();
+    if (recovered && adapter.getStatus) {
+      try {
+        const snapshot = await adapter.getStatus();
+        setState(snapshot);
+      } catch (retryErr) {
+        adapter = createMockAdapter();
+        hasTauri = false;
+        registerAdapterListeners();
+        const snapshot = await adapter.getStatus();
+        setState(snapshot);
+        state.logs.unshift({
+          ts_ms: Date.now(),
+          level: "error",
+          message: `Tauri IPC 初始化失败，已切换模拟模式：${String(retryErr)}`,
+        });
+        state.logs = state.logs.slice(0, 200);
+        render();
+      }
+    } else {
+      adapter = createMockAdapter();
+      hasTauri = false;
+      registerAdapterListeners();
+      const snapshot = await adapter.getStatus();
+      setState(snapshot);
+      state.logs.unshift({
+        ts_ms: Date.now(),
+        level: "error",
+        message: `Tauri IPC 初始化失败，已切换模拟模式：${String(err)}`,
+      });
+      state.logs = state.logs.slice(0, 200);
+      render();
+    }
   }
   if (!hasTauri) {
     state.logs.unshift({
