@@ -284,3 +284,32 @@ test("close request is intercepted and forwarded to hide_to_tray", async (t) => 
   assert.equal(closeEvent.prevented, true);
   assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
 });
+
+test("custom window controls call tauri window APIs", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
+
+  await import(`./app.js?window-controls=${Date.now()}`);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  document.getElementById("window-minimize").dispatchEvent(new window.Event("click"));
+  document.getElementById("window-maximize").dispatchEvent(new window.Event("click"));
+  document.getElementById("window-close").dispatchEvent(new window.Event("click"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
+  assert.ok(tauri.calls.some((call) => call.command === "window.toggleMaximize"));
+  assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
+});
