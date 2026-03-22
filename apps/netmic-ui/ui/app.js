@@ -289,11 +289,16 @@ const updateWaveform = (payload) => {
 };
 
 const scheduleAfterRender = (callback) => {
+  let fired = false;
+  const run = () => {
+    if (fired) return;
+    fired = true;
+    callback();
+  };
   if (typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(() => callback());
-    return;
+    window.requestAnimationFrame(run);
   }
-  window.setTimeout(callback, 0);
+  window.setTimeout(run, 16);
 };
 
 const scheduleInterval = (callback, delayMs) => {

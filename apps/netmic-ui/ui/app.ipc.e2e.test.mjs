@@ -161,3 +161,22 @@ test("ipc adapter calls invoke and updates UI from snapshot", async (t) => {
   );
   assert.ok(renderAck.args.ack.visible.log_lines.length > 0);
 });
+
+test("render ack falls back when requestAnimationFrame never fires", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  global.window.requestAnimationFrame = () => 1;
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = { invoke: tauri.invoke, event: tauri.event };
+
+  await import(`./app.js?fallback=${Date.now()}`);
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
+});
