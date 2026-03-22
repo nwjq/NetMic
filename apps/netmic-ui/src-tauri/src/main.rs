@@ -2517,6 +2517,26 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    fn with_env_var<T>(key: &str, value: Option<&str>, run: impl FnOnce() -> T) -> T {
+        let _guard = env_lock().lock().expect("env lock");
+        let previous = std::env::var_os(key);
+        match value {
+            Some(next) => std::env::set_var(key, next),
+            None => std::env::remove_var(key),
+        }
+        let result = run();
+        match previous {
+            Some(prev) => std::env::set_var(key, prev),
+            None => std::env::remove_var(key),
+        }
+        result
+    }
+
     fn fresh_state() -> SharedState {
         Arc::new(Mutex::new(AppState::new_with_path(
             PathBuf::from("/tmp/netmic-ui-test.json"),
@@ -2632,31 +2652,27 @@ mod tests {
 
     #[test]
     fn harness_mode_defaults_to_client() {
-        std::env::remove_var(ENV_HARNESS_MODE);
-
-        assert_eq!(harness_mode(), "client");
+        with_env_var(ENV_HARNESS_MODE, None, || {
+            assert_eq!(harness_mode(), "client");
+        });
     }
 
     #[test]
     fn harness_mode_accepts_server() {
-        std::env::set_var(ENV_HARNESS_MODE, "server");
-
-        assert_eq!(harness_mode(), "server");
-
-        std::env::remove_var(ENV_HARNESS_MODE);
+        with_env_var(ENV_HARNESS_MODE, Some("server"), || {
+            assert_eq!(harness_mode(), "server");
+        });
     }
 
     #[test]
     fn harness_server_config_uses_harness_port() {
-        std::env::set_var(ENV_HARNESS_SERVER_PORT, "43123");
+        with_env_var(ENV_HARNESS_SERVER_PORT, Some("43123"), || {
+            let config = harness_server_config();
 
-        let config = harness_server_config();
-
-        assert_eq!(config.listen_port, 43123);
-        assert!(config.virtual_mic_enabled);
-        assert!(!config.force_takeover);
-
-        std::env::remove_var(ENV_HARNESS_SERVER_PORT);
+            assert_eq!(config.listen_port, 43123);
+            assert!(config.virtual_mic_enabled);
+            assert!(!config.force_takeover);
+        });
     }
 
     #[test]
@@ -2887,45 +2903,49 @@ mod tests {
     #[test]
     fn harness_render_ack_writes_frontend_log() {
         let log_path = std::env::temp_dir().join(format!("netmic-ui-render-{}.ndjson", now_ms()));
-        std::env::set_var(ENV_HARNESS_RENDER_LOG, &log_path);
 
-        let ack = HarnessRenderAck {
-            snapshot: AppState::default().snapshot,
-            visible: HarnessVisibleState {
-                active_tab: "status".to_string(),
-                status_label: "推流中".to_string(),
-                status_note: "推流中（握手成功）".to_string(),
-                primary_action: "停止推流".to_string(),
-                connection_lines: vec!["模式：Client".to_string()],
-                metrics_lines: vec!["RTT".to_string(), "4.0 ms".to_string()],
-                audio_lines: vec!["时域波形".to_string()],
-                params_lines: vec!["Codec：opus".to_string()],
-                events_lines: vec!["[INFO] 准备就绪".to_string()],
-                config_connection_lines: vec!["Server IP".to_string()],
-                config_audio_lines: vec!["音频参数".to_string()],
-                config_client_lines: vec!["输入设备".to_string()],
-                config_server_lines: vec![],
-                fallback_lines: vec!["暂无回退记录".to_string()],
-                log_filter: "all".to_string(),
-                log_lines: vec!["INFO 准备就绪".to_string()],
+        with_env_var(
+            ENV_HARNESS_RENDER_LOG,
+            Some(log_path.to_string_lossy().as_ref()),
+            || {
+                let ack = HarnessRenderAck {
+                    snapshot: AppState::default().snapshot,
+                    visible: HarnessVisibleState {
+                        active_tab: "status".to_string(),
+                        status_label: "推流中".to_string(),
+                        status_note: "推流中（握手成功）".to_string(),
+                        primary_action: "停止推流".to_string(),
+                        connection_lines: vec!["模式：Client".to_string()],
+                        metrics_lines: vec!["RTT".to_string(), "4.0 ms".to_string()],
+                        audio_lines: vec!["时域波形".to_string()],
+                        params_lines: vec!["Codec：opus".to_string()],
+                        events_lines: vec!["[INFO] 准备就绪".to_string()],
+                        config_connection_lines: vec!["Server IP".to_string()],
+                        config_audio_lines: vec!["音频参数".to_string()],
+                        config_client_lines: vec!["输入设备".to_string()],
+                        config_server_lines: vec![],
+                        fallback_lines: vec!["暂无回退记录".to_string()],
+                        log_filter: "all".to_string(),
+                        log_lines: vec!["INFO 准备就绪".to_string()],
+                    },
+                };
+
+                assert!(report_harness_render(ack));
+
+                let payload = fs::read_to_string(&log_path).expect("render log should exist");
+                assert!(payload.contains("\"active_tab\":\"status\""), "{payload}");
+                assert!(payload.contains("\"status_label\":\"推流中\""), "{payload}");
+                assert!(
+                    payload.contains("\"primary_action\":\"停止推流\""),
+                    "{payload}"
+                );
+                assert!(
+                    payload.contains("\"connection_lines\":[\"模式：Client\"]"),
+                    "{payload}"
+                );
             },
-        };
-
-        assert!(report_harness_render(ack));
-
-        let payload = fs::read_to_string(&log_path).expect("render log should exist");
-        assert!(payload.contains("\"active_tab\":\"status\""), "{payload}");
-        assert!(payload.contains("\"status_label\":\"推流中\""), "{payload}");
-        assert!(
-            payload.contains("\"primary_action\":\"停止推流\""),
-            "{payload}"
-        );
-        assert!(
-            payload.contains("\"connection_lines\":[\"模式：Client\"]"),
-            "{payload}"
         );
 
         let _ = fs::remove_file(&log_path);
-        std::env::remove_var(ENV_HARNESS_RENDER_LOG);
     }
 }
