@@ -130,9 +130,16 @@ const createTauriAdapter = (tauriApi) => {
   };
 };
 
-const tauriApi = resolveTauriApi();
-const hasTauri = Boolean(tauriApi);
-let adapter = hasTauri ? createTauriAdapter(tauriApi) : createMockAdapter();
+let hasTauri = false;
+let adapter = createMockAdapter();
+
+const activateTauriAdapter = () => {
+  const tauriApi = resolveTauriApi();
+  if (!tauriApi) return false;
+  hasTauri = true;
+  adapter = createTauriAdapter(tauriApi);
+  return true;
+};
 
 const getState = () => state;
 
@@ -297,6 +304,16 @@ const scheduleInterval = (callback, delayMs) => {
   return timer;
 };
 
+const waitForTauriAdapter = async (timeoutMs = 1500, pollMs = 25) => {
+  if (activateTauriAdapter()) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs));
+    if (activateTauriAdapter()) return true;
+  }
+  return false;
+};
+
 const htmlToLines = (html) =>
   String(html || "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -395,6 +412,7 @@ const startStatusPoller = () => {
 };
 
 const init = async () => {
+  await waitForTauriAdapter();
   bindActions({
     elements,
     getState,
