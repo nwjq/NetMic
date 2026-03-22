@@ -93,23 +93,41 @@ print(json.dumps(msg.get("payload", {{}}), ensure_ascii=False))
 def remote_start_server(env: Dict[str, str], remote_dir: str, port: int) -> run_m0.CommandResult:
     script = f"""
 set -euo pipefail
+stop_pid() {{
+  pid="$1"
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  kill "$pid" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  kill -9 "$pid" >/dev/null 2>&1 || true
+  sleep 1
+}}
+
+cleanup_port_pids() {{
+  if ! command -v ss >/dev/null 2>&1; then
+    return 0
+  fi
+  pids="$(ss -lunp 2>/dev/null | grep ':{port}' | grep -o 'pid=[0-9]\\+' | cut -d= -f2 | sort -u || true)"
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}}
+
 mkdir -p {remote_dir}
 if [ -f {remote_dir}/server.pid ]; then
   pid="$(cat {remote_dir}/server.pid || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid" >/dev/null 2>&1 || true
-    for _ in 1 2 3 4 5; do
-      if ! kill -0 "$pid" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 1
-    done
-    if kill -0 "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
-      sleep 1
-    fi
-  fi
+  stop_pid "$pid"
 fi
+cleanup_port_pids
 rm -f {remote_dir}/server.pid {remote_dir}/runtime.log {remote_dir}/audio_dump.pcm
 nohup env \
   RUST_LOG=info \
@@ -121,6 +139,11 @@ nohup env \
   > {remote_dir}/runtime.log 2>&1 < /dev/null &
 echo $! > {remote_dir}/server.pid
 sleep 1
+pid="$(cat {remote_dir}/server.pid)"
+if ! kill -0 "$pid" >/dev/null 2>&1; then
+  cat {remote_dir}/runtime.log
+  exit 1
+fi
 cat {remote_dir}/server.pid
 """
     return run_m0.run_remote(env, script)
@@ -129,23 +152,41 @@ cat {remote_dir}/server.pid
 def remote_stop_server(env: Dict[str, str], remote_dir: str) -> run_m0.CommandResult:
     script = f"""
 set +e
+stop_pid() {{
+  pid="$1"
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  kill "$pid" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  kill -9 "$pid" >/dev/null 2>&1 || true
+  sleep 1
+}}
+
+cleanup_port_pids() {{
+  if ! command -v ss >/dev/null 2>&1; then
+    return 0
+  fi
+  pids="$(ss -lunp 2>/dev/null | grep ':{env.get("NETMIC_HARNESS_SERVER_PORT", "43000") or "43000"}' | grep -o 'pid=[0-9]\\+' | cut -d= -f2 | sort -u || true)"
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}}
+
 if [ -f {remote_dir}/server.pid ]; then
   pid="$(cat {remote_dir}/server.pid)"
-  if [ -n "$pid" ]; then
-    kill "$pid" >/dev/null 2>&1 || true
-    for _ in 1 2 3 4 5; do
-      if ! kill -0 "$pid" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 1
-    done
-    if kill -0 "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
-      sleep 1
-    fi
-  fi
+  stop_pid "$pid"
   rm -f {remote_dir}/server.pid
 fi
+cleanup_port_pids
 """
     return run_m0.run_remote(env, script)
 
