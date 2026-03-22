@@ -58,17 +58,19 @@ const elements = {
 
 const resolveTauriApi = () => {
   if (!window.__TAURI__) return null;
-  const legacyInvoke = window.__TAURI__.invoke;
-  const legacyEvent = window.__TAURI__.event;
-  if (typeof legacyInvoke === "function" && legacyEvent) {
-    return { invoke: legacyInvoke, event: legacyEvent };
-  }
-  const core = window.__TAURI__.core;
-  const event = window.__TAURI__.event;
-  if (core && typeof core.invoke === "function" && event) {
-    return { invoke: core.invoke, event };
-  }
-  return null;
+  const legacyInvoke =
+    typeof window.__TAURI__.invoke === "function" ? window.__TAURI__.invoke : null;
+  const coreInvoke =
+    typeof window.__TAURI__.core?.invoke === "function"
+      ? window.__TAURI__.core.invoke
+      : null;
+  const invoke = legacyInvoke || coreInvoke;
+  if (!invoke) return null;
+  const event =
+    window.__TAURI__.event && typeof window.__TAURI__.event.listen === "function"
+      ? window.__TAURI__.event
+      : null;
+  return { invoke, event };
 };
 
 const createTauriAdapter = (tauriApi) => {
@@ -114,6 +116,7 @@ const createTauriAdapter = (tauriApi) => {
       return invoke("report_harness_render", { ack });
     },
     onSnapshot(handler) {
+      if (!event || typeof event.listen !== "function") return;
       event.listen(EVENT_SNAPSHOT, (payload) => {
         if (payload && payload.payload) {
           handler(payload.payload);
@@ -121,6 +124,7 @@ const createTauriAdapter = (tauriApi) => {
       });
     },
     onWaveform(handler) {
+      if (!event || typeof event.listen !== "function") return;
       event.listen(EVENT_WAVEFORM, (payload) => {
         if (payload && payload.payload) {
           handler(payload.payload);

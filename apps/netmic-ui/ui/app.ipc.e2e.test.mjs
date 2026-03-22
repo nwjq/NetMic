@@ -180,3 +180,22 @@ test("render ack falls back when requestAnimationFrame never fires", async (t) =
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
 });
+
+test("ipc adapter accepts core.invoke without event bridge", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = { core: { invoke: tauri.invoke } };
+
+  await import(`./app.js?invoke-only=${Date.now()}`);
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(tauri.calls.some((call) => call.command === "get_status"));
+  assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
+});
