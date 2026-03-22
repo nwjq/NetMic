@@ -627,10 +627,10 @@ def sync_remote_workspace_via_git(
     local_branch = str(local_state.get("branch", "") or "")
     remote_branch = str(remote_state.get("branch", "") or "")
     if not local_branch or not remote_branch:
-        return ("fail", "本地或远端当前分支为空，无法执行 git 同步", results)
+        return ("blocked", "本地或远端当前分支为空，无法执行 git 同步", results)
     if local_branch != remote_branch:
         return (
-            "fail",
+            "blocked",
             f"本地/远端分支不一致，拒绝继续同步：local={local_branch}, remote={remote_branch}",
             results,
         )
@@ -638,7 +638,7 @@ def sync_remote_workspace_via_git(
     local_dirty_paths = list(local_state.get("dirty_paths", []))
     if local_dirty_paths:
         return (
-            "fail",
+            "blocked",
             "本地仓库存在未提交产品代码，先提交再执行 git 同步："
             + summarize_paths(local_dirty_paths),
             results,
@@ -647,7 +647,7 @@ def sync_remote_workspace_via_git(
     remote_dirty_paths = list(remote_state.get("dirty_paths", []))
     if remote_dirty_paths:
         return (
-            "fail",
+            "blocked",
             "远端仓库存在未提交改动，不能直接 git pull --ff-only："
             + summarize_paths(remote_dirty_paths),
             results,
