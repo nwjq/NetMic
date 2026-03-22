@@ -25,6 +25,7 @@ body {
   color: var(--ink);
   background: radial-gradient(circle at top, #fff7e8 0%, #f4f1ea 52%, #e7e0d2 100%);
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .ambient {
@@ -41,29 +42,61 @@ body {
 .app {
   position: relative;
   z-index: 1;
-  padding: 28px 32px 40px;
+  min-height: 100vh;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.titlebar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px 20px 10px;
+  position: relative;
+  z-index: 3;
+}
+
+.titlebar::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(255, 250, 243, 0.92), rgba(255, 250, 243, 0.74));
+  border-bottom: 1px solid rgba(27, 26, 23, 0.08);
+  backdrop-filter: blur(16px);
+  z-index: -1;
+}
+
+.titlebar-caption {
+  min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 24px;
+  align-items: center;
+}
+
+.titlebar-caption-text {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(27, 26, 23, 0.72);
+  text-transform: uppercase;
+}
+
+.titlebar-drag-fill {
+  min-height: 22px;
 }
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) auto auto auto auto;
-  gap: 20px;
+  grid-template-columns: minmax(220px, 1.2fr) auto auto auto;
+  gap: 18px;
   align-items: center;
   background: var(--panel);
-  padding: 18px 20px;
+  padding: 22px 22px;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   animation: fadeIn 0.6s ease-out;
-}
-
-.titlebar-drag {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 16px;
 }
 
 .brand {
@@ -103,12 +136,6 @@ body {
   color: var(--muted);
   letter-spacing: 0.5px;
   text-transform: uppercase;
-}
-
-.titlebar-spacer {
-  flex: 1 1 auto;
-  min-width: 48px;
-  height: 28px;
 }
 
 .mode-switch {
@@ -188,37 +215,75 @@ body {
   justify-self: end;
 }
 
+.app-shell {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .window-controls {
   display: inline-flex;
   gap: 8px;
-  justify-self: end;
+  justify-self: start;
+  align-items: center;
 }
 
 .window-control {
-  border: 1px solid var(--line);
-  background: rgba(27, 26, 23, 0.03);
-  color: var(--muted);
-  padding: 10px 14px;
-  min-width: 74px;
-  border-radius: 12px;
+  border: none;
+  background: transparent;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  padding: 0;
+  border-radius: 999px;
   cursor: pointer;
-  font-weight: 600;
-  transition: all 0.2s ease;
+  position: relative;
+  transition: transform 0.18s ease, filter 0.18s ease;
 }
 
 .window-control:hover {
-  border-color: rgba(27, 26, 23, 0.28);
-  color: var(--ink);
+  transform: scale(1.08);
 }
 
-.window-control.danger {
-  color: var(--danger);
-  border-color: rgba(214, 69, 69, 0.22);
+.window-control:focus-visible {
+  outline: 2px solid rgba(15, 138, 123, 0.42);
+  outline-offset: 3px;
 }
 
-.window-control.danger:hover {
-  background: rgba(214, 69, 69, 0.08);
-  border-color: rgba(214, 69, 69, 0.38);
+.window-control-dot {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  border: 1px solid rgba(27, 26, 23, 0.18);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.34);
+}
+
+.window-control-minimize .window-control-dot {
+  background: linear-gradient(180deg, #f4c95f, #e6a23c);
+}
+
+.window-control-maximize .window-control-dot {
+  background: linear-gradient(180deg, #66c77e, #2f9d63);
+}
+
+.window-control-close .window-control-dot {
+  background: linear-gradient(180deg, #f17777, #d64545);
+}
+
+.window-control-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 button {
@@ -566,22 +631,22 @@ button {
 }
 
 @media (max-width: 1100px) {
+  .app-shell {
+    padding: 10px 18px 28px;
+  }
+
   .topbar {
     grid-template-columns: 1fr;
     gap: 14px;
   }
 
-  .titlebar-drag,
   .app-actions,
-  .window-controls,
   .mode-switch,
   .status-pill {
     justify-self: stretch;
   }
 
-  .titlebar-drag,
-  .app-actions,
-  .window-controls {
+  .app-actions {
     flex-wrap: wrap;
   }
 

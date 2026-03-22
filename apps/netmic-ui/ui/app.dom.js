@@ -59,19 +59,41 @@ export const renderPrimaryAction = ({ state, elements, isBusy }) => {
 };
 
 export const renderAppActions = ({ elements, windowState }) => {
+  const setWindowControl = (element, label, title) => {
+    if (!element) return;
+    const labelElement =
+      typeof element.querySelector === "function"
+        ? element.querySelector(".window-control-label")
+        : null;
+    if (labelElement) {
+      labelElement.textContent = label;
+    } else {
+      element.textContent = label;
+    }
+    if (typeof element.setAttribute === "function") {
+      element.setAttribute("aria-label", label);
+      element.setAttribute("title", title || label);
+    } else {
+      element.title = title || label;
+    }
+  };
+
   if (elements.windowMinimize) {
-    elements.windowMinimize.textContent = "最小化";
-    elements.windowMinimize.title = "最小化（macOS: Cmd+M / Linux: Ctrl+M）";
+    setWindowControl(elements.windowMinimize, "最小化", "最小化（macOS: Cmd+M / Linux: Ctrl+M）");
   }
   if (elements.windowMaximize) {
-    elements.windowMaximize.textContent = windowState?.maximized ? "还原" : "最大化";
-    elements.windowMaximize.title = windowState?.maximized
+    const label = windowState?.maximized ? "还原" : "最大化";
+    const title = windowState?.maximized
       ? "还原窗口（macOS: Ctrl+Cmd+F / Linux: F11）"
       : "最大化（macOS: Ctrl+Cmd+F / Linux: F11）";
+    setWindowControl(elements.windowMaximize, label, title);
   }
   if (elements.windowClose) {
-    elements.windowClose.textContent = "关闭";
-    elements.windowClose.title = "关闭到后台（macOS: Cmd+W / Linux: Ctrl+W）";
+    setWindowControl(
+      elements.windowClose,
+      "关闭",
+      "关闭到后台（macOS: Cmd+W / Linux: Ctrl+W）"
+    );
   }
 };
 

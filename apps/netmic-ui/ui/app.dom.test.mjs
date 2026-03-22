@@ -31,6 +31,22 @@ const createButton = (mode) => ({
 
 const createElements = () => {
   const statusDot = { style: {} };
+  const createWindowControl = () => {
+    const label = { textContent: "" };
+    return {
+      textContent: "",
+      title: "",
+      attributes: {},
+      querySelector(selector) {
+        return selector === ".window-control-label" ? label : null;
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+        if (name === "title") this.title = value;
+      },
+      label,
+    };
+  };
   return {
     modeButtons: [createButton("client"), createButton("server")],
     statusLabel: { textContent: "" },
@@ -42,9 +58,9 @@ const createElements = () => {
       },
     },
     primaryAction: { textContent: "" },
-    windowMinimize: { textContent: "" },
-    windowMaximize: { textContent: "" },
-    windowClose: { textContent: "" },
+    windowMinimize: createWindowControl(),
+    windowMaximize: createWindowControl(),
+    windowClose: createWindowControl(),
     logFilter: { value: "all" },
     logList: { innerHTML: "" },
   };
@@ -120,12 +136,13 @@ test("renderPrimaryAction switches labels by mode/busy", () => {
 test("renderAppActions sets custom window control labels", () => {
   const elements = createElements();
   renderAppActions({ elements, windowState: { maximized: false } });
-  assert.equal(elements.windowMinimize.textContent, "最小化");
-  assert.equal(elements.windowMaximize.textContent, "最大化");
-  assert.equal(elements.windowClose.textContent, "关闭");
+  assert.equal(elements.windowMinimize.label.textContent, "最小化");
+  assert.equal(elements.windowMaximize.label.textContent, "最大化");
+  assert.equal(elements.windowClose.label.textContent, "关闭");
+  assert.match(elements.windowClose.title, /关闭到后台/);
 
   renderAppActions({ elements, windowState: { maximized: true } });
-  assert.equal(elements.windowMaximize.textContent, "还原");
+  assert.equal(elements.windowMaximize.label.textContent, "还原");
 });
 
 test("renderLogs respects log level filter", () => {
