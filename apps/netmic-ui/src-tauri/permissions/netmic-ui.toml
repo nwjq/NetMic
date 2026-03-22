@@ -1,0 +1,64 @@
+[[permission]]
+identifier = "allow-get-status"
+description = "允许读取当前 NetMic UI 状态快照。"
+commands.allow = ["get_status"]
+
+[[permission]]
+identifier = "allow-set-mode"
+description = "允许切换 NetMic UI 的工作模式。"
+commands.allow = ["set_mode"]
+
+[[permission]]
+identifier = "allow-set-client-config"
+description = "允许写入客户端配置。"
+commands.allow = ["set_client_config"]
+
+[[permission]]
+identifier = "allow-set-server-config"
+description = "允许写入服务端配置。"
+commands.allow = ["set_server_config"]
+
+[[permission]]
+identifier = "allow-reset-defaults"
+description = "允许恢复默认配置。"
+commands.allow = ["reset_defaults"]
+
+[[permission]]
+identifier = "allow-start"
+description = "允许启动 NetMic 会话。"
+commands.allow = ["start"]
+
+[[permission]]
+identifier = "allow-stop"
+description = "允许停止 NetMic 会话。"
+commands.allow = ["stop"]
+
+[[permission]]
+identifier = "allow-force-disconnect"
+description = "允许执行强制断连。"
+commands.allow = ["force_disconnect"]
+
+[[permission]]
+identifier = "allow-virtual-mic-create"
+description = "允许创建虚拟麦克风。"
+commands.allow = ["virtual_mic_create"]
+
+[[permission]]
+identifier = "allow-virtual-mic-remove"
+description = "允许移除虚拟麦克风。"
+commands.allow = ["virtual_mic_remove"]
+
+[[permission]]
+identifier = "allow-clear-logs"
+description = "允许清空运行日志。"
+commands.allow = ["clear_logs"]
+
+[[permission]]
+identifier = "allow-export-logs"
+description = "允许导出运行日志。"
+commands.allow = ["export_logs"]
+
+[[permission]]
+identifier = "allow-report-harness-render"
+description = "允许 Harness 上报前端渲染确认。"
+commands.allow = ["report_harness_render"]

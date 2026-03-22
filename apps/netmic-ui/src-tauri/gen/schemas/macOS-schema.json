@@ -177,6 +177,90 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`",
+          "type": "string",
+          "const": "default",
+          "markdownDescription": "NetMic 应用内 IPC 默认权限集合。\n#### This default permission set includes:\n\n- `allow-get-status`\n- `allow-set-mode`\n- `allow-set-client-config`\n- `allow-set-server-config`\n- `allow-reset-defaults`\n- `allow-start`\n- `allow-stop`\n- `allow-force-disconnect`\n- `allow-virtual-mic-create`\n- `allow-virtual-mic-remove`\n- `allow-clear-logs`\n- `allow-export-logs`\n- `allow-report-harness-render`"
+        },
+        {
+          "description": "允许清空运行日志。",
+          "type": "string",
+          "const": "allow-clear-logs",
+          "markdownDescription": "允许清空运行日志。"
+        },
+        {
+          "description": "允许导出运行日志。",
+          "type": "string",
+          "const": "allow-export-logs",
+          "markdownDescription": "允许导出运行日志。"
+        },
+        {
+          "description": "允许执行强制断连。",
+          "type": "string",
+          "const": "allow-force-disconnect",
+          "markdownDescription": "允许执行强制断连。"
+        },
+        {
+          "description": "允许读取当前 NetMic UI 状态快照。",
+          "type": "string",
+          "const": "allow-get-status",
+          "markdownDescription": "允许读取当前 NetMic UI 状态快照。"
+        },
+        {
+          "description": "允许 Harness 上报前端渲染确认。",
+          "type": "string",
+          "const": "allow-report-harness-render",
+          "markdownDescription": "允许 Harness 上报前端渲染确认。"
+        },
+        {
+          "description": "允许恢复默认配置。",
+          "type": "string",
+          "const": "allow-reset-defaults",
+          "markdownDescription": "允许恢复默认配置。"
+        },
+        {
+          "description": "允许写入客户端配置。",
+          "type": "string",
+          "const": "allow-set-client-config",
+          "markdownDescription": "允许写入客户端配置。"
+        },
+        {
+          "description": "允许切换 NetMic UI 的工作模式。",
+          "type": "string",
+          "const": "allow-set-mode",
+          "markdownDescription": "允许切换 NetMic UI 的工作模式。"
+        },
+        {
+          "description": "允许写入服务端配置。",
+          "type": "string",
+          "const": "allow-set-server-config",
+          "markdownDescription": "允许写入服务端配置。"
+        },
+        {
+          "description": "允许启动 NetMic 会话。",
+          "type": "string",
+          "const": "allow-start",
+          "markdownDescription": "允许启动 NetMic 会话。"
+        },
+        {
+          "description": "允许停止 NetMic 会话。",
+          "type": "string",
+          "const": "allow-stop",
+          "markdownDescription": "允许停止 NetMic 会话。"
+        },
+        {
+          "description": "允许创建虚拟麦克风。",
+          "type": "string",
+          "const": "allow-virtual-mic-create",
+          "markdownDescription": "允许创建虚拟麦克风。"
+        },
+        {
+          "description": "允许移除虚拟麦克风。",
+          "type": "string",
+          "const": "allow-virtual-mic-remove",
+          "markdownDescription": "允许移除虚拟麦克风。"
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

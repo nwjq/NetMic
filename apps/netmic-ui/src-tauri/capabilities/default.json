@@ -7,18 +7,6 @@
   ],
   "permissions": [
     "core:default",
-    "get_status",
-    "set_mode",
-    "set_client_config",
-    "set_server_config",
-    "reset_defaults",
-    "start",
-    "stop",
-    "force_disconnect",
-    "virtual_mic_create",
-    "virtual_mic_remove",
-    "clear_logs",
-    "export_logs",
-    "report_harness_render"
+    "default"
   ]
 }

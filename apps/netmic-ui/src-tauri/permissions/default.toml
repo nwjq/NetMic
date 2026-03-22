@@ -1,0 +1,17 @@
+[default]
+description = "NetMic 应用内 IPC 默认权限集合。"
+permissions = [
+  "allow-get-status",
+  "allow-set-mode",
+  "allow-set-client-config",
+  "allow-set-server-config",
+  "allow-reset-defaults",
+  "allow-start",
+  "allow-stop",
+  "allow-force-disconnect",
+  "allow-virtual-mic-create",
+  "allow-virtual-mic-remove",
+  "allow-clear-logs",
+  "allow-export-logs",
+  "allow-report-harness-render",
+]
