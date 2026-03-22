@@ -89,6 +89,13 @@ const resolveTauriApi = () => {
 
 const createTauriAdapter = (tauriApi) => {
   const { invoke, event, currentWindow } = tauriApi;
+  const invokeWindowCommand = async (command, args = {}) => {
+    try {
+      return await invoke(command, args);
+    } catch (_error) {
+      return null;
+    }
+  };
   return {
     async getStatus() {
       return invoke("get_status");
@@ -109,11 +116,19 @@ const createTauriAdapter = (tauriApi) => {
       return invoke("hide_to_tray");
     },
     async minimizeWindow() {
+      const invoked = await invokeWindowCommand("window_minimize");
+      if (typeof invoked === "boolean") {
+        return invoked;
+      }
       if (!currentWindow || typeof currentWindow.minimize !== "function") return false;
       await currentWindow.minimize();
       return true;
     },
     async toggleMaximizeWindow() {
+      const invoked = await invokeWindowCommand("window_toggle_maximize");
+      if (typeof invoked === "boolean") {
+        return invoked;
+      }
       if (!currentWindow) {
         return false;
       }
@@ -141,12 +156,20 @@ const createTauriAdapter = (tauriApi) => {
       return true;
     },
     async isWindowMaximized() {
+      const invoked = await invokeWindowCommand("window_is_maximized");
+      if (typeof invoked === "boolean") {
+        return invoked;
+      }
       if (!currentWindow || typeof currentWindow.isMaximized !== "function") {
         return false;
       }
       return currentWindow.isMaximized();
     },
-    startWindowDrag() {
+    async startWindowDrag() {
+      const invoked = await invokeWindowCommand("window_start_drag");
+      if (typeof invoked === "boolean") {
+        return invoked;
+      }
       if (!currentWindow || typeof currentWindow.startDragging !== "function") {
         return false;
       }

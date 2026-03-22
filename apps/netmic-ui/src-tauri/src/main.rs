@@ -1060,6 +1060,44 @@ fn hide_to_tray(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
+fn window_minimize(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .map(|window| window.minimize().is_ok())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn window_toggle_maximize(app: AppHandle) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let maximized = window.is_maximized().unwrap_or(false);
+    let result = if maximized {
+        window.unmaximize()
+    } else {
+        window.maximize()
+    };
+    if result.is_err() {
+        return maximized;
+    }
+    !maximized
+}
+
+#[tauri::command]
+fn window_is_maximized(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|window| window.is_maximized().ok())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn window_start_drag(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .map(|window| window.start_dragging().is_ok())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
 fn reset_defaults(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     let snapshot = apply_reset_defaults(state.inner());
     emit_snapshot(&app, &snapshot);
@@ -2480,6 +2518,10 @@ fn main() {
             set_server_config,
             set_launch_at_login,
             hide_to_tray,
+            window_minimize,
+            window_toggle_maximize,
+            window_is_maximized,
+            window_start_drag,
             reset_defaults,
             start,
             stop,

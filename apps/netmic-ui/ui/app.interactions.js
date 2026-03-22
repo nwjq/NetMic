@@ -126,6 +126,7 @@ export const bindActions = ({
         void adapter.startWindowDrag();
       }
     };
+    handle.addEventListener("pointerdown", startDrag);
     handle.addEventListener("mousedown", startDrag);
   });
 

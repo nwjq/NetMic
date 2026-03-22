@@ -40,6 +40,7 @@ const createTauriStub = () => {
   const calls = [];
   const listeners = new Map();
   let closeHandler = null;
+  let maximized = false;
 
   const invoke = async (command, args = {}) => {
     calls.push({ command, args });
@@ -102,6 +103,15 @@ const createTauriStub = () => {
         return { ...snapshot };
       case "export_logs":
         return { ok: true };
+      case "window_minimize":
+        return true;
+      case "window_toggle_maximize":
+        maximized = !maximized;
+        return maximized;
+      case "window_is_maximized":
+        return maximized;
+      case "window_start_drag":
+        return true;
       case "report_harness_render":
         return true;
       default:
@@ -117,7 +127,6 @@ const createTauriStub = () => {
 
   const webviewWindow = {
     getCurrentWebviewWindow() {
-      let maximized = false;
       return {
         async onCloseRequested(handler) {
           closeHandler = handler;
@@ -323,10 +332,15 @@ test("custom window controls call tauri window APIs", async (t) => {
   document.getElementById("window-close").dispatchEvent(new window.Event("click"));
   await new Promise((resolve) => setTimeout(resolve, 50));
 
-  assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
+  assert.ok(
+    tauri.calls.some(
+      (call) => call.command === "window_minimize" || call.command === "window.minimize"
+    )
+  );
   assert.ok(
     tauri.calls.some(
       (call) =>
+        call.command === "window_toggle_maximize" ||
         call.command === "window.maximize" ||
         call.command === "window.unmaximize" ||
         call.command === "window.toggleMaximize"
@@ -365,10 +379,17 @@ test("window shortcuts map to the same custom window actions", async (t) => {
   );
   await new Promise((resolve) => setTimeout(resolve, 50));
 
-  assert.ok(tauri.calls.some((call) => call.command === "window.minimize"));
   assert.ok(
     tauri.calls.some(
-      (call) => call.command === "window.maximize" || call.command === "window.toggleMaximize"
+      (call) => call.command === "window_minimize" || call.command === "window.minimize"
+    )
+  );
+  assert.ok(
+    tauri.calls.some(
+      (call) =>
+        call.command === "window_toggle_maximize" ||
+        call.command === "window.maximize" ||
+        call.command === "window.toggleMaximize"
     )
   );
   assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
@@ -398,5 +419,9 @@ test("drag handle starts native window dragging", async (t) => {
     .dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }));
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  assert.ok(tauri.calls.some((call) => call.command === "window.startDragging"));
+  assert.ok(
+    tauri.calls.some(
+      (call) => call.command === "window_start_drag" || call.command === "window.startDragging"
+    )
+  );
 });
