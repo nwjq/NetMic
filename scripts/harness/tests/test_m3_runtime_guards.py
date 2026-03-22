@@ -43,6 +43,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         self.tmpdir.cleanup()
 
     def make_report(self, *, started_at: str, finished_at: str, wall_runtime_sec=None):
+        min_runtime_sec = run_m3.MIN_PASS_RUNTIME_SEC
         report = {
             "status": "pass",
             "started_at": started_at,
@@ -51,7 +52,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
             "_manifest": {
                 "milestone": "M3",
                 "runtime": {
-                    "app_runtime_sec": 1800,
+                    "app_runtime_sec": min_runtime_sec,
                 },
                 "repo": {
                     "head_commit": "current-head",
@@ -82,7 +83,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         report = self.make_report(
             started_at="2026-03-21T23:01:55+08:00",
             finished_at="2026-03-21T23:02:16+08:00",
-            wall_runtime_sec=1802.5,
+            wall_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC + 2.5,
         )
         self.assertTrue(coordinator.report_counts_as_pass(report, "M3"))
 
@@ -97,13 +98,16 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         note = coordinator.report_completion_note(report, "M3")
 
         self.assertIn("24s", note)
-        self.assertIn("1800s", note)
+        self.assertIn(f"{run_m3.MIN_PASS_RUNTIME_SEC}s", note)
 
     def test_completion_note_preserves_latest_fail_summary(self):
         report = {
             "status": "blocked",
             "summary": "远端工作区同步预检失败：ssh: connect to host 192.168.11.1 port 22: Operation not permitted",
-            "_manifest": {"milestone": "M3", "runtime": {"app_runtime_sec": 1800}},
+            "_manifest": {
+                "milestone": "M3",
+                "runtime": {"app_runtime_sec": run_m3.MIN_PASS_RUNTIME_SEC},
+            },
             "_recovery": {},
         }
 
@@ -116,7 +120,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         report = self.make_report(
             started_at="2026-03-21T23:01:55+08:00",
             finished_at="2026-03-22T00:02:16+08:00",
-            wall_runtime_sec=1802.5,
+            wall_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC + 2.5,
         )
         report["_recovery"]["reconnect_visibility"] = {"ok": False}
 
@@ -128,7 +132,7 @@ class CoordinatorM3PassCriteriaTests(unittest.TestCase):
         report = self.make_report(
             started_at="2026-03-21T23:01:55+08:00",
             finished_at="2026-03-22T00:02:16+08:00",
-            wall_runtime_sec=1802.5,
+            wall_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC + 2.5,
         )
         (self.run_dir / "server" / "phase2" / "runtime.log").unlink()
 
@@ -309,7 +313,7 @@ class RunM3VerdictTests(unittest.TestCase):
             stable_before_report=self.ok_window,
             stable_after_report=self.ok_window,
             reconnect_visibility={"ok": True},
-            app_runtime_sec=1800,
+            app_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC,
             wall_runtime_sec=21.0,
             recovery_ms=1026,
             phase2_audio_dump=self.phase2_audio_dump,
@@ -323,8 +327,8 @@ class RunM3VerdictTests(unittest.TestCase):
             stable_before_report=self.ok_window,
             stable_after_report=self.ok_window,
             reconnect_visibility={"ok": True},
-            app_runtime_sec=1800,
-            wall_runtime_sec=1804.2,
+            app_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC,
+            wall_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC + 4.2,
             recovery_ms=1026,
             phase2_audio_dump=self.phase2_audio_dump,
         )
@@ -342,8 +346,8 @@ class RunM3VerdictTests(unittest.TestCase):
                 "visible_status_note": "",
                 "visible_status_label": "连接中",
             },
-            app_runtime_sec=1800,
-            wall_runtime_sec=1804.2,
+            app_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC,
+            wall_runtime_sec=run_m3.MIN_PASS_RUNTIME_SEC + 4.2,
             recovery_ms=1026,
             phase2_audio_dump=self.phase2_audio_dump,
         )

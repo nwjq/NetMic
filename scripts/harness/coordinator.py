@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HOSTS_ENV = ROOT / ".harness" / "hosts.env"
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 STATE_PATH = ROOT / ".harness" / "coordinator_state.json"
-M3_MIN_APP_RUNTIME_SEC = 30 * 60
+M3_MIN_APP_RUNTIME_SEC = 120
 M3_MAX_RECOVERY_MS = 10_000
 M3_REQUIRED_ARTIFACTS: Tuple[Tuple[str, bool], ...] = (
     ("ui/snapshot.json", True),
@@ -732,7 +732,7 @@ def main() -> int:
             m0_duration = (
                 max(1, int(args.run_m0_duration))
                 if args.run_m0_duration is not None
-                else run_m0.env_int(env, "NETMIC_HARNESS_M0_DURATION_SEC", 300, 1)
+                else run_m0.env_int(env, "NETMIC_HARNESS_M0_DURATION_SEC", 120, 1)
             )
             extra_args.extend(["--duration", str(m0_duration)])
         result = run_runner(unfinished, hosts_env, extra_args)

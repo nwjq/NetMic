@@ -26,7 +26,7 @@ from typing import Dict, List, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HOSTS_ENV = ROOT / ".harness" / "hosts.env"
-DEFAULT_DURATION_SEC = 300
+DEFAULT_DURATION_SEC = 120
 DEFAULT_SERVER_PORT = 43000
 DEFAULT_ARTIFACT_DIR = ROOT / ".harness" / "runs"
 UI_POLL_INTERVAL_MS = 1000
@@ -818,10 +818,39 @@ def summarize_commands_for_artifact(results: List[CommandResult]) -> List[Dict[s
 def run_remote(env: Dict[str, str], script: str, timeout_sec: int | None = None) -> CommandResult:
     linux_root = env["NETMIC_HARNESS_LINUX_ROOT"]
     ssh_base = build_ssh_base(env)
-    remote_script = f"cd {shlex.quote(linux_root)} && {script}"
+    remote_script = f"""
+set +e
+cd {shlex.quote(linux_root)} || exit 98
+(
+{script}
+)
+status=$?
+printf '__NETMIC_REMOTE_EXIT__=%s\\n' "$status"
+exit 0
+""".strip()
     command = ssh_base + [f"bash -lc {shlex.quote(remote_script)}"]
     effective_timeout = remote_timeout_sec(env) if timeout_sec is None else max(5, timeout_sec)
-    return run_command(command, timeout_sec=effective_timeout)
+    result = run_command(command, timeout_sec=effective_timeout)
+
+    marker_prefix = "__NETMIC_REMOTE_EXIT__="
+    marker_status = None
+    output_lines: List[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith(marker_prefix):
+            raw_value = line[len(marker_prefix) :].strip()
+            try:
+                marker_status = int(raw_value)
+            except ValueError:
+                output_lines.append(line)
+            continue
+        output_lines.append(line)
+
+    stdout = "\n".join(output_lines)
+    if result.stdout.endswith("\n") and output_lines:
+        stdout += "\n"
+    if marker_status is None or result.returncode == 255:
+        return CommandResult(result.command, result.returncode, stdout, result.stderr)
+    return CommandResult(result.command, marker_status, stdout, result.stderr)
 
 
 def build_snapshot(

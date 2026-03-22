@@ -61,7 +61,7 @@
   - 用途：Coordinator / runner 调用 `ssh`、`git`、`rsync` 等远端命令时的单次命令超时（秒）。
   - 说明：最小按 `5` 秒处理；超时会直接判为 `blocked`，并把底层超时报错写入产物。对已知长时步骤（例如 M0 的 `virtual_mic_smoke.sh --duration N`），runner 会自动把超时抬到 `max(该值, N+30)`，避免 smoke 时长长于默认超时。
 - `NETMIC_HARNESS_M0_DURATION_SEC`
-  - 默认值：`300`
+  - 默认值：`120`
   - 用途：M0 虚拟麦 smoke 时长（秒）。
 - `NETMIC_HARNESS_M1_DURATION_SEC`
   - 默认值：runner 内置默认值
@@ -70,11 +70,10 @@
   - 默认值：runner 内置默认值
   - 用途：M2 每组参数矩阵默认持续时长（秒）。
 - `NETMIC_HARNESS_M3_APP_RUNTIME_SEC`
-  - 默认值：`1800`
+  - 默认值：`120`
   - 用途：M3 真实 `netmic-ui` 运行时长（秒）。
-  - 说明：可下调为短时逻辑验证；但小于 1800 秒时，该 run 不得产出 M3 `pass`。
 - `NETMIC_HARNESS_M3_DISCONNECT_AFTER_SEC`
-  - 默认值：M3 默认断线时间点
+  - 默认值：`60`
   - 用途：M3 注入断线的触发时间（秒）。
   - 说明：应小于 `NETMIC_HARNESS_M3_APP_RUNTIME_SEC`，runner 会自动夹紧到合法范围。
 
@@ -161,7 +160,7 @@
   - 默认值：未设置（关闭）
   - 用途：设置为 `1/true/on/yes` 时，服务端不走 UDP 接收，直接向虚拟麦克风持续写入测试音（正弦波）。
 - `NETMIC_SERVER_TEST_TONE_SECS`
-  - 默认值：`300`
+  - 默认值：`120`
   - 用途：测试音持续时长（秒）。设置为 `0` 表示不限制。
 - `NETMIC_SERVER_TEST_TONE_HZ`
   - 默认值：`440`

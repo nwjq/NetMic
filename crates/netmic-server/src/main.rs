@@ -868,11 +868,11 @@ fn test_tone_duration_from_env() -> Option<Duration> {
             Ok(0) => None,
             Ok(secs) => Some(Duration::from_secs(secs)),
             Err(err) => {
-                warn!(%raw, %err, "invalid test tone duration, fallback to 300s");
-                Some(Duration::from_secs(300))
+                warn!(%raw, %err, "invalid test tone duration, fallback to 120s");
+                Some(Duration::from_secs(120))
             }
         },
-        Err(_) => Some(Duration::from_secs(300)),
+        Err(_) => Some(Duration::from_secs(120)),
     }
 }
 

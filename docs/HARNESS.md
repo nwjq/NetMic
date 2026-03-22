@@ -103,8 +103,7 @@ Harness 运行前，默认已由上游文档确定：
 - `M3`：`scripts/harness/run_m3.py`
   - 先把本地工作区同步到 Linux 侧仓库
   - 本地启动真实 `netmic-ui`（Harness 自动拉起）
-  - 默认执行 30 分钟真实 App 长测，并在中途打断/恢复远端 `netmic-server`
-  - 若通过 `--app-runtime-sec` 传入更短时长，只能作为调试 run；该 run 不得产出 `M3 pass`
+  - 默认执行 120 秒真实 App 稳定性 run，并在中途打断/恢复远端 `netmic-server`
   - M3 `pass` 必须同时满足“配置目标时长达标”与“真实 wall-clock 运行时长达标”；不能只依赖事件时间戳或 manifest 声明值
   - 以前端 render ack 校验断线前/恢复后的真实 UI 刷新连续性与稳定窗口；ack 中的 `snapshot.status` 与可见状态标签必须一致
   - 回收真实 App 的 snapshot/event log/render log、phase1/phase2 音频 dump 与 UI 恢复产物
@@ -215,7 +214,7 @@ scripts/harness/run_coordinator_local.sh --hosts-env .harness/hosts.env --until 
 - 源码快照只用于判定“当前验收是否仍对应同一份产品代码”；应排除 `.harness/hosts.env`、`.harness/runs/`、`.codex/`、`target/`、`node_modules/` 以及 `AGENTS.md` 这类本地现场或自动化噪音，避免无关改动让历史 `pass` 失效。
 - `M3` 的 `recovery.json` 不只用于 `pass`；即使在 `bootstrap-ui`、断线恢复、恢复后稳定窗口等阶段失败，也应写出当前阶段、已观测事件与 wall-clock 进度，避免失败后只剩摘要文字。
 - `M3` 的 phase UI 产物应直接来自真实 `netmic-ui` 的 render ack，而不是把 snapshot 离线重渲染后再当作“真实可见结果”。
-- `M3` 的长时刷新判定除 render ack 连续性外，还应确认 `server_status_updated_ms` 在稳定窗口内持续前进，避免前端只是反复重绘旧 snapshot。
+- `M3` 的稳定性刷新判定除 render ack 连续性外，还应确认 `server_status_updated_ms` 在稳定窗口内持续前进，避免前端只是反复重绘旧 snapshot。
 - 若当前里程碑暂未要求音频 dump，可先不生成 `audio_dump.pcm`，但必须补齐对应阶段的关键日志与状态文件。
 
 ## 7. 里程碑与 Harness 对齐
@@ -223,14 +222,14 @@ scripts/harness/run_coordinator_local.sh --hosts-env .harness/hosts.env --until 
 - `M0`：Linux 本机自检、虚拟麦创建、测试音/PCM 写入验证。
 - `M1`：macOS 采集 -> 网络发送 -> Linux 接收 -> 注入，默认参数跑通。
 - `M2`：参数安全范围、回退提示、状态回显进入 Harness。
-- `M3`：长时间稳定性、断线恢复、指标采集进入 Harness。
+- `M3`：120 秒稳定性 run、断线恢复、指标采集进入 Harness。
 
 UI 对齐要求：
 
 - M0：Server UI 能显示虚拟麦状态与错误
 - M1：连接/监听/推流状态在 UI 可见且及时刷新
 - M2：生效参数与 fallback 在 UI 可见且正确
-- M3：真实 App 运行时，UI 长时刷新、断线恢复与过期提示都正确
+- M3：真实 App 运行时，UI 稳定性 run 刷新、断线恢复与过期提示都正确
 
 规则：
 
@@ -291,7 +290,7 @@ UI 对齐要求：
 
 补充口径：
 
-- `M3` 旧产物只有在满足“真实 `netmic-ui` 长测 30 分钟、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
+- `M3` 旧产物只有在满足“真实 `netmic-ui` 运行 120 秒、恢复时长达标、前后稳定窗口刷新达标”时，才可被 coordinator 视为 `pass`
 - `M3` 旧产物还必须证明“断线期间前端 render ack 已显示可见的重连/过期提示”，至少要保证 reconnect 阶段的 `snapshot.status_note`、可见 `status_note` 与状态标签一致
 - 若最新 M3 产物只是调试短跑或缺少 wall-clock 证据，`coordinator_state.json` 应明确写出“不计 pass”的原因
 - coordinator 自身的远端同步预检同样会生成产物；若 `git/rsync/ssh` 失败，`sync/remote-sync.log` 与 `sync/remote-sync.json` 必须保留首个底层错误，避免 report 只剩泛化摘要

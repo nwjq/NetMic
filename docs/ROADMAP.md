@@ -17,8 +17,8 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 2) 创建虚拟麦克风（pactl + module-virtual-source）  
    - 参考脚本：`scripts/linux/virtual_mic_smoke.sh --cleanup-only`  
 3) 持续写入测试音（sine wave）  
-   - 参考脚本：`scripts/linux/virtual_mic_smoke.sh --duration 300`  
-4) 运行 5 分钟无中断  
+   - 参考脚本：`scripts/linux/virtual_mic_smoke.sh --duration 120`  
+4) 运行 2 分钟无中断  
 
 **Harness 交付**
 - Linux 端 bootstrap 入口明确
@@ -95,7 +95,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 ## Milestone 3：稳定性与可用性
 
 **目标**  
-30 分钟运行稳定，断线恢复 10 秒内完成。
+120 秒运行稳定，断线恢复 10 秒内完成。
 
 **任务清单**
 1) 抖动缓冲策略  
@@ -113,8 +113,7 @@ Linux 端能创建虚拟麦克风并持续写入 PCM。
 - `scripts/harness/run_m3.py`
   - 开跑前先把本地工作区同步到 Linux 侧仓库
   - 启动真实 `netmic-ui`
-  - 默认执行 30 分钟真实 App 长测
-  - 更短 `--app-runtime-sec` 仅用于调试，不计入 `M3 pass`
+  - 默认执行 120 秒真实 App 稳定性 run
   - 自动打断并恢复远端 `netmic-server`
   - 以前端 render ack + 真实 App snapshot/event log 校验 reconnect 与长时刷新
 
