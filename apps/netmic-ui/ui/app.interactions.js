@@ -57,6 +57,7 @@ export const bindActions = ({
   setActiveTab,
   isBusy,
   renderLogs,
+  setWindowState,
 }) => {
   elements.modeButtons.forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -75,8 +76,23 @@ export const bindActions = ({
     setState(snapshot);
   });
 
-  if (elements.hideToTray) {
-    elements.hideToTray.addEventListener("click", async () => {
+  if (elements.windowMinimize) {
+    elements.windowMinimize.addEventListener("click", async () => {
+      await adapter.minimizeWindow();
+    });
+  }
+
+  if (elements.windowMaximize) {
+    elements.windowMaximize.addEventListener("click", async () => {
+      const maximized = await adapter.toggleMaximizeWindow();
+      if (typeof setWindowState === "function") {
+        setWindowState({ maximized: Boolean(maximized) });
+      }
+    });
+  }
+
+  if (elements.windowClose) {
+    elements.windowClose.addEventListener("click", async () => {
       await adapter.hideToTray();
     });
   }

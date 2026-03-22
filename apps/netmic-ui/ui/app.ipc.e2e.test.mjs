@@ -117,12 +117,26 @@ const createTauriStub = () => {
 
   const webviewWindow = {
     getCurrentWebviewWindow() {
+      let maximized = false;
       return {
         async onCloseRequested(handler) {
           closeHandler = handler;
           return () => {
             closeHandler = null;
           };
+        },
+        async minimize() {
+          calls.push({ command: "window.minimize", args: {} });
+          return true;
+        },
+        async toggleMaximize() {
+          maximized = !maximized;
+          calls.push({ command: "window.toggleMaximize", args: { maximized } });
+          return true;
+        },
+        async isMaximized() {
+          calls.push({ command: "window.isMaximized", args: { maximized } });
+          return maximized;
         },
       };
     },

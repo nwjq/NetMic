@@ -42,7 +42,9 @@ const createElements = () => {
       },
     },
     primaryAction: { textContent: "" },
-    hideToTray: { textContent: "" },
+    windowMinimize: { textContent: "" },
+    windowMaximize: { textContent: "" },
+    windowClose: { textContent: "" },
     logFilter: { value: "all" },
     logList: { innerHTML: "" },
   };
@@ -115,10 +117,15 @@ test("renderPrimaryAction switches labels by mode/busy", () => {
   assert.equal(elements.primaryAction.textContent, "开始监听");
 });
 
-test("renderAppActions sets hide-to-tray label", () => {
+test("renderAppActions sets custom window control labels", () => {
   const elements = createElements();
-  renderAppActions({ elements });
-  assert.equal(elements.hideToTray.textContent, "隐藏到后台");
+  renderAppActions({ elements, windowState: { maximized: false } });
+  assert.equal(elements.windowMinimize.textContent, "最小化");
+  assert.equal(elements.windowMaximize.textContent, "最大化");
+  assert.equal(elements.windowClose.textContent, "关闭");
+
+  renderAppActions({ elements, windowState: { maximized: true } });
+  assert.equal(elements.windowMaximize.textContent, "还原");
 });
 
 test("renderLogs respects log level filter", () => {

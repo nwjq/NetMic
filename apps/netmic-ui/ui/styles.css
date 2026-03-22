@@ -49,7 +49,7 @@ body {
 
 .topbar {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: minmax(220px, 1.2fr) auto auto auto auto;
   gap: 20px;
   align-items: center;
   background: var(--panel);
@@ -59,10 +59,18 @@ body {
   animation: fadeIn 0.6s ease-out;
 }
 
+.titlebar-drag {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .brand {
   display: flex;
   gap: 12px;
   align-items: center;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -95,6 +103,12 @@ body {
   color: var(--muted);
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+
+.titlebar-spacer {
+  flex: 1 1 auto;
+  min-width: 48px;
+  height: 28px;
 }
 
 .mode-switch {
@@ -168,9 +182,43 @@ body {
   color: var(--danger);
 }
 
-.top-actions {
+.app-actions {
   display: flex;
   gap: 10px;
+  justify-self: end;
+}
+
+.window-controls {
+  display: inline-flex;
+  gap: 8px;
+  justify-self: end;
+}
+
+.window-control {
+  border: 1px solid var(--line);
+  background: rgba(27, 26, 23, 0.03);
+  color: var(--muted);
+  padding: 10px 14px;
+  min-width: 74px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.window-control:hover {
+  border-color: rgba(27, 26, 23, 0.28);
+  color: var(--ink);
+}
+
+.window-control.danger {
+  color: var(--danger);
+  border-color: rgba(214, 69, 69, 0.22);
+}
+
+.window-control.danger:hover {
+  background: rgba(214, 69, 69, 0.08);
+  border-color: rgba(214, 69, 69, 0.38);
 }
 
 button {
@@ -520,6 +568,21 @@ button {
 @media (max-width: 1100px) {
   .topbar {
     grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .titlebar-drag,
+  .app-actions,
+  .window-controls,
+  .mode-switch,
+  .status-pill {
+    justify-self: stretch;
+  }
+
+  .titlebar-drag,
+  .app-actions,
+  .window-controls {
+    flex-wrap: wrap;
   }
 
   .content {

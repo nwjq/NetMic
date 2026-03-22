@@ -10,12 +10,15 @@
     <div class="ambient"></div>
     <div id="app" class="app">
       <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">NM</div>
-          <div class="brand-text">
-            <div class="brand-name">NetMic</div>
-            <div class="brand-sub">MVP 控制台</div>
+        <div class="titlebar-drag" data-tauri-drag-region>
+          <div class="brand" data-tauri-drag-region>
+            <div class="brand-mark">NM</div>
+            <div class="brand-text">
+              <div class="brand-name">NetMic</div>
+              <div class="brand-sub">MVP 控制台</div>
+            </div>
           </div>
+          <div class="titlebar-spacer" data-tauri-drag-region></div>
         </div>
         <div class="mode-switch" role="tablist" aria-label="模式切换">
           <button class="mode-btn" data-mode="client" role="tab" aria-selected="false">Client</button>
@@ -28,10 +31,14 @@
             <div class="status-note" id="status-note">准备就绪</div>
           </div>
         </div>
-        <div class="top-actions">
-          <button class="ghost" id="hide-to-tray">隐藏到后台</button>
+        <div class="app-actions">
           <button class="ghost" id="reset-defaults">恢复默认</button>
           <button class="primary" id="primary-action">开始</button>
+        </div>
+        <div class="window-controls" aria-label="窗口控制">
+          <button class="window-control" id="window-minimize" title="最小化">最小化</button>
+          <button class="window-control" id="window-maximize" title="最大化">最大化</button>
+          <button class="window-control danger" id="window-close" title="关闭">关闭</button>
         </div>
       </header>
 

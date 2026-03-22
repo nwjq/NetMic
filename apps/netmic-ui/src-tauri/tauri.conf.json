@@ -14,6 +14,7 @@
         "title": "NetMic MVP 控制台",
         "width": 1200,
         "height": 820,
+        "decorations": false,
         "resizable": true
       }
     ],

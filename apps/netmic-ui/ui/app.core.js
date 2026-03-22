@@ -89,6 +89,7 @@ export const createMockAdapter = () => {
   let ticker = null;
   let waveTicker = null;
   let startAt = null;
+  let windowMaximized = false;
 
   const emit = () => {
     const snapshot = deepClone(mockState);
@@ -226,6 +227,20 @@ export const createMockAdapter = () => {
       pushLog("info", "已隐藏到后台（模拟）");
       emit();
       return true;
+    },
+    async minimizeWindow() {
+      pushLog("info", "已最小化窗口（模拟）");
+      emit();
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      windowMaximized = !windowMaximized;
+      pushLog("info", windowMaximized ? "已最大化窗口（模拟）" : "已还原窗口（模拟）");
+      emit();
+      return windowMaximized;
+    },
+    async isWindowMaximized() {
+      return windowMaximized;
     },
     async onCloseRequested() {
       return () => {};

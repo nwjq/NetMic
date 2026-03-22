@@ -35,7 +35,9 @@ test("bindActions triggers mode change when idle", async () => {
     modeButtons: [createButton({ mode: "client" }), createButton({ mode: "server" })],
     navButtons: [createButton({ tab: "config" })],
     primaryAction: createButton(),
-    hideToTray: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -61,6 +63,12 @@ test("bindActions triggers mode change when idle", async () => {
     async hideToTray() {
       return true;
     },
+    async minimizeWindow() {
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      return false;
+    },
     async clearLogs() {
       return { logs: [] };
     },
@@ -78,6 +86,7 @@ test("bindActions triggers mode change when idle", async () => {
     setActiveTab: () => {},
     isBusy: () => false,
     renderLogs: () => {},
+    setWindowState: () => {},
   });
 
   await elements.modeButtons[1].handlers.click();
@@ -90,7 +99,9 @@ test("bindActions blocks mode change when busy", async () => {
     modeButtons: [createButton({ mode: "client" })],
     navButtons: [],
     primaryAction: createButton(),
-    hideToTray: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -115,6 +126,12 @@ test("bindActions blocks mode change when busy", async () => {
     async hideToTray() {
       return true;
     },
+    async minimizeWindow() {
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      return false;
+    },
     async clearLogs() {
       return {};
     },
@@ -129,6 +146,7 @@ test("bindActions blocks mode change when busy", async () => {
     setActiveTab: () => {},
     isBusy: () => true,
     renderLogs: () => {},
+    setWindowState: () => {},
   });
 
   await elements.modeButtons[0].handlers.click();
@@ -140,7 +158,9 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     modeButtons: [],
     navButtons: [],
     primaryAction: createButton(),
-    hideToTray: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -160,6 +180,12 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     },
     async hideToTray() {
       return true;
+    },
+    async minimizeWindow() {
+      return true;
+    },
+    async toggleMaximizeWindow() {
+      return false;
     },
     async clearLogs() {
       return {};
@@ -182,6 +208,7 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     setActiveTab: () => {},
     isBusy: () => busy,
     renderLogs: () => {},
+    setWindowState: () => {},
   });
 
   await elements.primaryAction.handlers.click();
@@ -290,18 +317,22 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
   assert.deepEqual(lastSnapshot, { status: "listening" });
 });
 
-test("bindActions forwards hide-to-tray action", async () => {
+test("bindActions forwards custom window controls", async () => {
   const elements = {
     modeButtons: [],
     navButtons: [],
     primaryAction: createButton(),
-    hideToTray: createButton(),
+    windowMinimize: createButton(),
+    windowMaximize: createButton(),
+    windowClose: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
     logExport: createButton(),
   };
   let hidden = 0;
+  let minimized = 0;
+  let maximizeState = null;
   const adapter = {
     async start() {
       return {};
@@ -311,6 +342,13 @@ test("bindActions forwards hide-to-tray action", async () => {
     },
     async hideToTray() {
       hidden += 1;
+      return true;
+    },
+    async minimizeWindow() {
+      minimized += 1;
+      return true;
+    },
+    async toggleMaximizeWindow() {
       return true;
     },
     async resetDefaults() {
@@ -333,8 +371,15 @@ test("bindActions forwards hide-to-tray action", async () => {
     setActiveTab: () => {},
     isBusy: () => false,
     renderLogs: () => {},
+    setWindowState: (snapshot) => {
+      maximizeState = snapshot.maximized;
+    },
   });
 
-  await elements.hideToTray.handlers.click();
+  await elements.windowMinimize.handlers.click();
+  await elements.windowMaximize.handlers.click();
+  await elements.windowClose.handlers.click();
+  assert.equal(minimized, 1);
+  assert.equal(maximizeState, true);
   assert.equal(hidden, 1);
 });

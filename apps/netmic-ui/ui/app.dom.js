@@ -58,9 +58,15 @@ export const renderPrimaryAction = ({ state, elements, isBusy }) => {
   elements.primaryAction.textContent = state.mode === "client" ? "开始推流" : "开始监听";
 };
 
-export const renderAppActions = ({ elements }) => {
-  if (elements.hideToTray) {
-    elements.hideToTray.textContent = "隐藏到后台";
+export const renderAppActions = ({ elements, windowState }) => {
+  if (elements.windowMinimize) {
+    elements.windowMinimize.textContent = "最小化";
+  }
+  if (elements.windowMaximize) {
+    elements.windowMaximize.textContent = windowState?.maximized ? "还原" : "最大化";
+  }
+  if (elements.windowClose) {
+    elements.windowClose.textContent = "关闭";
   }
 };
 
