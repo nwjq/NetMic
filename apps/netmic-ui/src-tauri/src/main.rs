@@ -33,6 +33,7 @@ const ENV_SERVER_BIN: &str = "NETMIC_SERVER_BIN";
 const ENV_UI_SERVER_AUTO_STOP: &str = "NETMIC_UI_SERVER_AUTO_STOP";
 const ENV_CLIENT_HEARTBEAT_MS: &str = "NETMIC_CLIENT_HEARTBEAT_MS";
 const ENV_HARNESS_AUTOSTART: &str = "NETMIC_UI_HARNESS_AUTOSTART";
+const ENV_HARNESS_MODE: &str = "NETMIC_UI_HARNESS_MODE";
 const ENV_HARNESS_SERVER_ADDR: &str = "NETMIC_UI_HARNESS_SERVER_ADDR";
 const ENV_HARNESS_SERVER_PORT: &str = "NETMIC_UI_HARNESS_SERVER_PORT";
 const ENV_HARNESS_INPUT_DEVICE: &str = "NETMIC_UI_HARNESS_INPUT_DEVICE";
@@ -661,6 +662,13 @@ fn harness_server_port() -> u16 {
         .unwrap_or(43000)
 }
 
+fn harness_mode() -> String {
+    match env_trimmed(ENV_HARNESS_MODE).as_deref() {
+        Some("server") => "server".to_string(),
+        _ => "client".to_string(),
+    }
+}
+
 fn harness_client_config() -> UiClientConfig {
     let default = SessionParams::mvp_default();
     UiClientConfig {
@@ -680,6 +688,12 @@ fn harness_client_config() -> UiClientConfig {
     }
 }
 
+fn harness_server_config() -> UiServerConfig {
+    let mut config = default_server_config();
+    config.listen_port = harness_server_port();
+    config
+}
+
 fn maybe_start_harness_autostart(app: &AppHandle) {
     if !truthy_env(ENV_HARNESS_AUTOSTART) {
         return;
@@ -688,17 +702,18 @@ fn maybe_start_harness_autostart(app: &AppHandle) {
     let state = app.state::<SharedState>().inner().clone();
     let app = app.clone();
     std::thread::spawn(move || {
-        let mode_snapshot = apply_set_mode(&state, "client");
+        let mode = harness_mode();
+        let mode_snapshot = apply_set_mode(&state, &mode);
         emit_snapshot(&app, &mode_snapshot);
 
-        let config_snapshot = apply_set_client_config(&state, harness_client_config());
+        let config_snapshot = if mode == "server" {
+            apply_set_server_config(&state, harness_server_config())
+        } else {
+            apply_set_client_config(&state, harness_client_config())
+        };
         emit_snapshot(&app, &config_snapshot);
 
-        let start_snapshot = apply_start(&state);
-        emit_snapshot(&app, &start_snapshot);
-        ensure_metrics_loop(state.clone(), app.clone());
-        ensure_capture_loop(state.clone(), app.clone());
-        ensure_client_handshake_loop(state.clone(), app.clone());
+        start_runtime(state.clone(), app.clone());
     });
 }
 
@@ -2225,6 +2240,35 @@ mod tests {
         assert_eq!(snapshot.status, "listening");
         assert_eq!(snapshot.status_note, "已断开客户端");
         assert_eq!(snapshot.runtime.peer_addr, None);
+    }
+
+    #[test]
+    fn harness_mode_defaults_to_client() {
+        std::env::remove_var(ENV_HARNESS_MODE);
+
+        assert_eq!(harness_mode(), "client");
+    }
+
+    #[test]
+    fn harness_mode_accepts_server() {
+        std::env::set_var(ENV_HARNESS_MODE, "server");
+
+        assert_eq!(harness_mode(), "server");
+
+        std::env::remove_var(ENV_HARNESS_MODE);
+    }
+
+    #[test]
+    fn harness_server_config_uses_harness_port() {
+        std::env::set_var(ENV_HARNESS_SERVER_PORT, "43123");
+
+        let config = harness_server_config();
+
+        assert_eq!(config.listen_port, 43123);
+        assert!(config.virtual_mic_enabled);
+        assert!(!config.force_takeover);
+
+        std::env::remove_var(ENV_HARNESS_SERVER_PORT);
     }
 
     #[test]

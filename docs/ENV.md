@@ -126,13 +126,17 @@
   - 用途：UI 在 Server 模式点击“停止监听”时，若服务端由 UI 启动则自动结束该进程；设置为 `0/false/off/no` 可保留服务端继续运行。
 - `NETMIC_UI_HARNESS_AUTOSTART`
   - 默认值：未设置（关闭）
-  - 用途：真实 `netmic-ui` 在 Harness 模式下自动切到 Client、写入目标配置并开始推流。
+  - 用途：真实 `netmic-ui` 在 Harness 模式下自动进入 `NETMIC_UI_HARNESS_MODE` 指定模式并启动。
+- `NETMIC_UI_HARNESS_MODE`
+  - 默认值：`client`
+  - 用途：控制真实 `netmic-ui` 的 Harness 自启动模式；当前支持 `client` / `server`。
+  - 说明：`client` 会写入客户端配置并开始推流；`server` 会写入服务端配置并开始监听/创建虚拟麦克风。
 - `NETMIC_UI_HARNESS_SERVER_ADDR`
   - 默认值：`127.0.0.1`
-  - 用途：Harness 自动拉起 `netmic-ui` 时写入的服务端地址。
+  - 用途：Harness 自动拉起 `netmic-ui` 且模式为 `client` 时写入的服务端地址。
 - `NETMIC_UI_HARNESS_SERVER_PORT`
   - 默认值：`43000`
-  - 用途：Harness 自动拉起 `netmic-ui` 时写入的服务端端口。
+  - 用途：Harness 自动拉起 `netmic-ui` 时写入的服务端端口；`client` 模式下写入目标服务端端口，`server` 模式下写入监听端口。
 - `NETMIC_UI_HARNESS_INPUT_DEVICE`
   - 默认值：`系统默认`
   - 用途：Harness 自动拉起 `netmic-ui` 时指定输入设备。

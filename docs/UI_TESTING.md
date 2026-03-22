@@ -126,11 +126,13 @@ Harness 对 UI 的要求：
 ### M0
 
 - Server UI 能显示虚拟麦状态与相关错误
+- 若验收项涉及“点击启动监听后自动拉起服务端/创建虚拟麦克风”，必须运行真实 Linux `netmic-ui` Server 模式；离线渲染 snapshot 不能替代这条路径
 
 ### M1
 
 - Client / Server UI 能正确显示连接、监听、推流状态
 - 状态变化后页面及时刷新
+- 若验收项涉及 Linux 服务端侧的监听/连接/推流可见状态，必须来自真实 Linux `netmic-ui` 的 render ack 或同级真实 GUI 产物
 
 ### M2
 
