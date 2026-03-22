@@ -9,6 +9,16 @@
 - IPC 采用最小命令集：`get_status` / `set_client_config` / `set_server_config` / `start` / `stop` / `set_mode` / `force_disconnect` / `virtual_mic_create` / `virtual_mic_remove`。
 - **独立进程模式**：服务端独立运行，UI 通过 UDP 控制面请求状态/发送命令（默认使用 `listen_port`）。为了减少用户心智负担，Server 模式点击“启动监听”会自动拉起服务端进程（若未运行）；可用 `NETMIC_SERVER_BIN` 指定服务端可执行文件路径。编译 UI 时会一并编译 `netmic-server` 与 `netmic-client`，并放在 `target/<profile>/` 供启动与联调。
 
+## Release / 打包约定
+- 日常开发可直接运行 `target/<profile>/netmic-ui`；其中 `netmic-server` 与 `netmic-client` 会由 `src-tauri/build.rs` 一并构建到同级目录。
+- 正式打包统一在 `apps/netmic-ui/` 目录执行：`cargo tauri build -c src-tauri/tauri.bundle.conf.json`。
+- 打包后的 GUI 仍保持“一体化应用”体验：UI 负责拉起并管理内置的 `netmic-server`。
+- release bundle 会把 `netmic-server` / `netmic-client` 一并打入应用资源目录：
+  - macOS：位于 `.app/Contents/Resources/`
+  - Linux：位于 bundle resource 目录（如 AppImage 挂载后的 `usr/lib/<exe_name>/`）
+- 开发态 `tauri.conf.json` 保持 `bundle.active=false`，避免 debug/test 编译被 release 资源路径校验误伤；正式打包再通过 `tauri.bundle.conf.json` 打开 bundle，并由 `scripts/prepare_dist.sh` 生成干净的前端静态目录。
+- `NETMIC_SERVER_BIN` 仍可覆盖内置路径，主要用于 Harness、现场排障或自定义部署。
+
 ## 视图模型（UiSnapshot）
 
 ### 顶层结构

@@ -1,0 +1,21 @@
+{
+  "build": {
+    "beforeBuildCommand": "../scripts/prepare_dist.sh",
+    "frontendDist": "../ui/dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../target/release/netmic-server": "netmic-server",
+      "../../../target/release/netmic-client": "netmic-client"
+    }
+  }
+}

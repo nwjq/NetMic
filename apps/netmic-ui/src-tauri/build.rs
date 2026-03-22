@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    tauri_build::build();
     build_netmic_server();
     build_netmic_client();
+    tauri_build::build();
 }
 
 fn build_netmic_server() {

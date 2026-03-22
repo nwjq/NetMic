@@ -771,7 +771,7 @@ fn start_runtime(state: SharedState, app: AppHandle) -> UiSnapshot {
         ensure_capture_loop(state.clone(), app.clone());
         ensure_client_handshake_loop(state.clone(), app.clone());
     } else {
-        if let Err(err) = ensure_server_running(&state) {
+        if let Err(err) = ensure_server_running(&state, &app) {
             let snapshot = {
                 let mut guard = state.lock().expect("state lock");
                 guard.snapshot.status = "error".to_string();
@@ -794,6 +794,7 @@ fn start_runtime(state: SharedState, app: AppHandle) -> UiSnapshot {
         if should_create {
             let snapshot = apply_server_command(
                 &state,
+                &app,
                 "virtual_mic_create",
                 "已请求创建虚拟麦克风",
                 "虚拟麦克风创建失败",
@@ -881,6 +882,7 @@ fn force_disconnect(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 fn virtual_mic_create(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     let snapshot = apply_server_command(
         state.inner(),
+        &app,
         "virtual_mic_create",
         "已请求创建虚拟麦克风",
         "虚拟麦克风创建失败",
@@ -897,6 +899,7 @@ fn virtual_mic_create(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
 fn virtual_mic_remove(state: State<SharedState>, app: AppHandle) -> UiSnapshot {
     let snapshot = apply_server_command(
         state.inner(),
+        &app,
         "virtual_mic_remove",
         "已请求移除虚拟麦克风",
         "虚拟麦克风移除失败",
@@ -1638,7 +1641,7 @@ fn refresh_server_status(state: &SharedState) -> Option<UiSnapshot> {
     Some(guard.snapshot.clone())
 }
 
-fn ensure_server_running(state: &SharedState) -> Result<(), String> {
+fn ensure_server_running(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let listen_port = {
         let guard = state.lock().expect("state lock");
         guard.snapshot.server_config.listen_port
@@ -1659,7 +1662,7 @@ fn ensure_server_running(state: &SharedState) -> Result<(), String> {
                 return Ok(());
             }
         }
-        match spawn_server_process(listen_port) {
+        match spawn_server_process(listen_port, app) {
             Ok(child) => {
                 guard.push_log("info", "已启动服务端进程");
                 Some(child)
@@ -1745,8 +1748,8 @@ fn stop_server_process_if_needed(state: &SharedState) {
     }
 }
 
-fn spawn_server_process(listen_port: u16) -> Result<Child, String> {
-    let bin = resolve_server_binary()?;
+fn spawn_server_process(listen_port: u16, app: &AppHandle) -> Result<Child, String> {
+    let bin = resolve_server_binary(app)?;
     let mut cmd = Command::new(&bin);
     cmd.env("NETMIC_SERVER_UDP_PORT", listen_port.to_string())
         .env("NETMIC_SERVER_VIRTUAL_MIC_AUTO_CREATE", "1");
@@ -1754,7 +1757,7 @@ fn spawn_server_process(listen_port: u16) -> Result<Child, String> {
         .map_err(|err| format!("启动服务端失败（{}）：{err}", bin.display()))
 }
 
-fn resolve_server_binary() -> Result<PathBuf, String> {
+fn resolve_server_binary(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(raw) = env::var(ENV_SERVER_BIN) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
@@ -1773,6 +1776,13 @@ fn resolve_server_binary() -> Result<PathBuf, String> {
             if candidate.exists() {
                 return Ok(candidate);
             }
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let candidate = resource_dir.join("netmic-server");
+        if candidate.exists() {
+            return Ok(candidate);
         }
     }
 
@@ -1988,6 +1998,7 @@ fn apply_force_disconnect(state: &SharedState) -> UiSnapshot {
 
 fn apply_server_command(
     state: &SharedState,
+    app: &AppHandle,
     action: &str,
     ok_message: &str,
     fail_prefix: &str,
@@ -1998,7 +2009,7 @@ fn apply_server_command(
         guard.push_log("warn", "仅服务端模式支持该操作");
         return guard.snapshot.clone();
     }
-    if let Err(err) = ensure_server_running(state) {
+    if let Err(err) = ensure_server_running(state, app) {
         let mut guard = state.lock().expect("state lock");
         guard.snapshot.runtime.last_error = Some(err.clone());
         guard.push_log("error", format!("服务端启动失败：{err}"));
