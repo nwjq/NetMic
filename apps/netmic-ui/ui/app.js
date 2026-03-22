@@ -1,5 +1,6 @@
 import { WAVEFORM_POINTS, createMockAdapter, defaultSnapshot, isBusy } from "./app.core.js";
 import {
+  renderAppActions,
   renderConfig,
   renderLogs,
   renderStatus,
@@ -19,6 +20,7 @@ let waveformCanvas = null;
 let waveformCtx = null;
 let pendingHarnessRenderReport = false;
 let statusPoller = null;
+let closeInterceptorAttached = false;
 
 const sampleRates = [16000, 24000, 32000, 44100, 48000];
 const chunkOptions = [10, 20, 40, 60];
@@ -38,6 +40,7 @@ const elements = {
   statusLabel: document.getElementById("status-label"),
   statusNote: document.getElementById("status-note"),
   primaryAction: document.getElementById("primary-action"),
+  hideToTray: document.getElementById("hide-to-tray"),
   resetDefaults: document.getElementById("reset-defaults"),
   configConnection: document.getElementById("config-connection"),
   configAudio: document.getElementById("config-audio"),
@@ -71,11 +74,17 @@ const resolveTauriApi = () => {
     window.__TAURI__.event && typeof window.__TAURI__.event.listen === "function"
       ? window.__TAURI__.event
       : null;
-  return { invoke, event };
+  const currentWindow =
+    typeof window.__TAURI__.webviewWindow?.getCurrentWebviewWindow === "function"
+      ? window.__TAURI__.webviewWindow.getCurrentWebviewWindow()
+      : typeof window.__TAURI__.window?.getCurrentWindow === "function"
+        ? window.__TAURI__.window.getCurrentWindow()
+        : null;
+  return { invoke, event, currentWindow };
 };
 
 const createTauriAdapter = (tauriApi) => {
-  const { invoke, event } = tauriApi;
+  const { invoke, event, currentWindow } = tauriApi;
   return {
     async getStatus() {
       return invoke("get_status");
@@ -91,6 +100,9 @@ const createTauriAdapter = (tauriApi) => {
     },
     async setLaunchAtLogin(enabled) {
       return invoke("set_launch_at_login", { enabled });
+    },
+    async hideToTray() {
+      return invoke("hide_to_tray");
     },
     async resetDefaults() {
       return invoke("reset_defaults");
@@ -118,6 +130,12 @@ const createTauriAdapter = (tauriApi) => {
     },
     async reportHarnessRender(ack) {
       return invoke("report_harness_render", { ack });
+    },
+    async onCloseRequested(handler) {
+      if (!currentWindow || typeof currentWindow.onCloseRequested !== "function") {
+        return () => {};
+      }
+      return currentWindow.onCloseRequested(handler);
     },
     onSnapshot(handler) {
       if (!event || typeof event.listen !== "function") return;
@@ -222,6 +240,21 @@ const isConfigEditing = () => {
     return Boolean(active.closest("[data-field]"));
   }
   return false;
+};
+
+const registerCloseInterceptor = async () => {
+  if (closeInterceptorAttached || !adapter.onCloseRequested) return;
+  closeInterceptorAttached = true;
+  await adapter.onCloseRequested(async (event) => {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    try {
+      await adapter.hideToTray();
+    } catch (_) {
+      // 关闭拦截失败时不抛出到 UI 主循环。
+    }
+  });
 };
 
 const setState = (snapshot, options = {}) => {
@@ -378,6 +411,7 @@ const render = ({ skipConfig = false } = {}) => {
   renderModeButtons({ state, elements, isBusy });
   renderStatusPill({ state, elements });
   renderPrimaryAction({ state, elements, isBusy });
+  renderAppActions({ elements });
   if (!skipConfig) {
     renderConfig({
       state,
@@ -445,6 +479,7 @@ const init = async () => {
 
   // 先注册事件监听，避免错过启动阶段的首个 snapshot。
   registerAdapterListeners();
+  await registerCloseInterceptor();
 
   try {
     const snapshot = await adapter.getStatus();

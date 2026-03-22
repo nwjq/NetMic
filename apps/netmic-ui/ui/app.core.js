@@ -222,6 +222,14 @@ export const createMockAdapter = () => {
       emit();
       return deepClone(mockState);
     },
+    async hideToTray() {
+      pushLog("info", "已隐藏到后台（模拟）");
+      emit();
+      return true;
+    },
+    async onCloseRequested() {
+      return () => {};
+    },
     async resetDefaults() {
       const preservedSettings = deepClone(mockState.app_settings);
       mockState = defaultSnapshot();

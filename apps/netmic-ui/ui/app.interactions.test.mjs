@@ -35,6 +35,7 @@ test("bindActions triggers mode change when idle", async () => {
     modeButtons: [createButton({ mode: "client" }), createButton({ mode: "server" })],
     navButtons: [createButton({ tab: "config" })],
     primaryAction: createButton(),
+    hideToTray: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -56,6 +57,9 @@ test("bindActions triggers mode change when idle", async () => {
     },
     async resetDefaults() {
       return { status: "idle" };
+    },
+    async hideToTray() {
+      return true;
     },
     async clearLogs() {
       return { logs: [] };
@@ -86,6 +90,7 @@ test("bindActions blocks mode change when busy", async () => {
     modeButtons: [createButton({ mode: "client" })],
     navButtons: [],
     primaryAction: createButton(),
+    hideToTray: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -106,6 +111,9 @@ test("bindActions blocks mode change when busy", async () => {
     },
     async resetDefaults() {
       return {};
+    },
+    async hideToTray() {
+      return true;
     },
     async clearLogs() {
       return {};
@@ -132,6 +140,7 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     modeButtons: [],
     navButtons: [],
     primaryAction: createButton(),
+    hideToTray: createButton(),
     resetDefaults: createButton(),
     logFilter: createEmitter(),
     logClear: createButton(),
@@ -148,6 +157,9 @@ test("bindActions toggles start/stop via primaryAction", async () => {
     },
     async resetDefaults() {
       return {};
+    },
+    async hideToTray() {
+      return true;
     },
     async clearLogs() {
       return {};
@@ -276,4 +288,53 @@ test("bindConfigInputs triggers forceDisconnect", async () => {
   await forceButton.handlers.click();
   assert.equal(forced, true);
   assert.deepEqual(lastSnapshot, { status: "listening" });
+});
+
+test("bindActions forwards hide-to-tray action", async () => {
+  const elements = {
+    modeButtons: [],
+    navButtons: [],
+    primaryAction: createButton(),
+    hideToTray: createButton(),
+    resetDefaults: createButton(),
+    logFilter: createEmitter(),
+    logClear: createButton(),
+    logExport: createButton(),
+  };
+  let hidden = 0;
+  const adapter = {
+    async start() {
+      return {};
+    },
+    async stop() {
+      return {};
+    },
+    async hideToTray() {
+      hidden += 1;
+      return true;
+    },
+    async resetDefaults() {
+      return {};
+    },
+    async clearLogs() {
+      return {};
+    },
+    async exportLogs() {},
+    async setMode() {
+      return {};
+    },
+  };
+
+  bindActions({
+    elements,
+    getState: () => ({ mode: "client", status: "idle" }),
+    setState: () => {},
+    adapter,
+    setActiveTab: () => {},
+    isBusy: () => false,
+    renderLogs: () => {},
+  });
+
+  await elements.hideToTray.handlers.click();
+  assert.equal(hidden, 1);
 });

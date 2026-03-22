@@ -75,6 +75,12 @@ export const bindActions = ({
     setState(snapshot);
   });
 
+  if (elements.hideToTray) {
+    elements.hideToTray.addEventListener("click", async () => {
+      await adapter.hideToTray();
+    });
+  }
+
   elements.resetDefaults.addEventListener("click", async () => {
     const snapshot = await adapter.resetDefaults();
     setState(snapshot);

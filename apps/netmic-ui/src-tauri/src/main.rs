@@ -27,7 +27,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State, Window, WindowEvent, Wry};
+use tauri::{
+    path::BaseDirectory, AppHandle, Emitter, Manager, RunEvent, State, WebviewWindow, Window,
+    WindowEvent, Wry,
+};
 
 const EVENT_SNAPSHOT: &str = "netmic://snapshot";
 const EVENT_WAVEFORM: &str = "netmic://waveform";
@@ -741,12 +744,23 @@ fn set_system_launch_at_login(app: &AppHandle, enabled: bool) -> Result<(), Stri
     Ok(())
 }
 
+fn ensure_main_window(app: &AppHandle) -> Option<WebviewWindow<Wry>> {
+    if let Some(window) = app.get_webview_window("main") {
+        return Some(window);
+    }
+    let config = app.config().app.windows.first()?;
+    tauri::WebviewWindowBuilder::from_config(app, config)
+        .ok()?
+        .build()
+        .ok()
+}
+
 fn open_main_window(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     {
         let _ = app.show();
     }
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = ensure_main_window(app) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -1030,6 +1044,19 @@ fn set_launch_at_login(state: State<SharedState>, app: AppHandle, enabled: bool)
     let snapshot = apply_set_launch_at_login(state.inner(), &app, enabled);
     emit_snapshot(&app, &snapshot);
     snapshot
+}
+
+#[tauri::command]
+fn hide_to_tray(app: AppHandle) -> bool {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.hide();
+        }
+        return true;
+    }
+    false
 }
 
 #[tauri::command]
@@ -2406,14 +2433,14 @@ fn build_waveform(samples: &[i16], points: usize) -> (Vec<f32>, f32, u32) {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let exit_requested = window
                     .app_handle()
-                    .state::<ExitRequested>()
-                    .0
-                    .load(Ordering::Relaxed);
+                    .try_state::<ExitRequested>()
+                    .map(|state| state.0.load(Ordering::Relaxed))
+                    .unwrap_or(false);
                 if !exit_requested {
                     api.prevent_close();
                     hide_main_window(window);
@@ -2452,6 +2479,7 @@ fn main() {
             set_client_config,
             set_server_config,
             set_launch_at_login,
+            hide_to_tray,
             reset_defaults,
             start,
             stop,
@@ -2462,8 +2490,27 @@ fn main() {
             clear_logs,
             report_harness_render
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        if let RunEvent::ExitRequested { api, .. } = event {
+            let exit_requested = app
+                .try_state::<ExitRequested>()
+                .map(|state| state.0.load(Ordering::Relaxed))
+                .unwrap_or(false);
+            if !exit_requested {
+                api.prevent_exit();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = app.hide();
+                    }
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]

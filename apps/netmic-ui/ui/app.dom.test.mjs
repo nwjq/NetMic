@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SERVER_STATUS_STALE_ALERT_MS,
+  renderAppActions,
   renderConfig,
   renderLogs,
   renderModeButtons,
@@ -41,6 +42,7 @@ const createElements = () => {
       },
     },
     primaryAction: { textContent: "" },
+    hideToTray: { textContent: "" },
     logFilter: { value: "all" },
     logList: { innerHTML: "" },
   };
@@ -111,6 +113,12 @@ test("renderPrimaryAction switches labels by mode/busy", () => {
     isBusy: () => false,
   });
   assert.equal(elements.primaryAction.textContent, "开始监听");
+});
+
+test("renderAppActions sets hide-to-tray label", () => {
+  const elements = createElements();
+  renderAppActions({ elements });
+  assert.equal(elements.hideToTray.textContent, "隐藏到后台");
 });
 
 test("renderLogs respects log level filter", () => {

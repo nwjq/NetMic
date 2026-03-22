@@ -58,6 +58,12 @@ export const renderPrimaryAction = ({ state, elements, isBusy }) => {
   elements.primaryAction.textContent = state.mode === "client" ? "开始推流" : "开始监听";
 };
 
+export const renderAppActions = ({ elements }) => {
+  if (elements.hideToTray) {
+    elements.hideToTray.textContent = "隐藏到后台";
+  }
+};
+
 export const renderLogs = ({ state, elements }) => {
   const filter = elements.logFilter.value || "all";
   const logs = state.logs.filter((log) => filter === "all" || log.level === filter);

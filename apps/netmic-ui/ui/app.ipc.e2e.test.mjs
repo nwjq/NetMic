@@ -39,6 +39,7 @@ const createTauriStub = () => {
   let snapshot = defaultSnapshot();
   const calls = [];
   const listeners = new Map();
+  let closeHandler = null;
 
   const invoke = async (command, args = {}) => {
     calls.push({ command, args });
@@ -114,6 +115,19 @@ const createTauriStub = () => {
     },
   };
 
+  const webviewWindow = {
+    getCurrentWebviewWindow() {
+      return {
+        async onCloseRequested(handler) {
+          closeHandler = handler;
+          return () => {
+            closeHandler = null;
+          };
+        },
+      };
+    },
+  };
+
   const emit = (name, payload) => {
     const handler = listeners.get(name);
     if (handler) {
@@ -121,7 +135,19 @@ const createTauriStub = () => {
     }
   };
 
-  return { invoke, event, emit, calls };
+  const close = async () => {
+    if (!closeHandler) return;
+    const event = {
+      prevented: false,
+      preventDefault() {
+        this.prevented = true;
+      },
+    };
+    await closeHandler(event);
+    return event;
+  };
+
+  return { invoke, event, emit, calls, close, webviewWindow };
 };
 
 test("ipc adapter calls invoke and updates UI from snapshot", async (t) => {
@@ -134,7 +160,11 @@ test("ipc adapter calls invoke and updates UI from snapshot", async (t) => {
     delete global.Event;
   });
   const tauri = createTauriStub();
-  global.window.__TAURI__ = { invoke: tauri.invoke, event: tauri.event };
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
 
   await import("./app.js");
 
@@ -142,7 +172,7 @@ test("ipc adapter calls invoke and updates UI from snapshot", async (t) => {
   const primary = document.getElementById("primary-action");
   const statusNote = document.getElementById("status-note");
 
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.ok(tauri.calls.some((call) => call.command === "get_status"));
   assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
 
@@ -183,11 +213,15 @@ test("render ack falls back when requestAnimationFrame never fires", async (t) =
   });
   global.window.requestAnimationFrame = () => 1;
   const tauri = createTauriStub();
-  global.window.__TAURI__ = { invoke: tauri.invoke, event: tauri.event };
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
 
   await import(`./app.js?fallback=${Date.now()}`);
 
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
 });
 
@@ -201,11 +235,38 @@ test("ipc adapter accepts core.invoke without event bridge", async (t) => {
     delete global.Event;
   });
   const tauri = createTauriStub();
-  global.window.__TAURI__ = { core: { invoke: tauri.invoke } };
+  global.window.__TAURI__ = {
+    core: { invoke: tauri.invoke },
+    webviewWindow: tauri.webviewWindow,
+  };
 
   await import(`./app.js?invoke-only=${Date.now()}`);
 
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.ok(tauri.calls.some((call) => call.command === "get_status"));
   assert.ok(tauri.calls.some((call) => call.command === "report_harness_render"));
+});
+
+test("close request is intercepted and forwarded to hide_to_tray", async (t) => {
+  const dom = await buildDom();
+  t.after(() => {
+    dom.window.close();
+    delete global.window;
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Event;
+  });
+  const tauri = createTauriStub();
+  global.window.__TAURI__ = {
+    invoke: tauri.invoke,
+    event: tauri.event,
+    webviewWindow: tauri.webviewWindow,
+  };
+
+  await import(`./app.js?close=${Date.now()}`);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const closeEvent = await tauri.close();
+  assert.equal(closeEvent.prevented, true);
+  assert.ok(tauri.calls.some((call) => call.command === "hide_to_tray"));
 });
