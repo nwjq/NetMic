@@ -218,6 +218,18 @@ mod tests {
         assert_eq!(response.effective.sample_rate_hz, DEFAULT_SAMPLE_RATE_HZ);
         assert_eq!(response.effective.chunk_ms, DEFAULT_CHUNK_MS);
     }
+
+    #[test]
+    fn adapt_pcm16_channels_duplicates_mono_samples_for_stereo_sink() {
+        let payload = [0x34, 0x12, 0x78, 0x56];
+
+        let expanded = adapt_pcm16_channels(&payload, 1, 2).expect("expand mono");
+
+        assert_eq!(
+            expanded,
+            vec![0x34, 0x12, 0x34, 0x12, 0x78, 0x56, 0x78, 0x56]
+        );
+    }
 }
 
 fn init_tracing() {
@@ -734,6 +746,9 @@ impl AudioSink for NullSink {
 #[cfg(target_os = "linux")]
 struct PulseAudioSink {
     simple: libpulse_simple_binding::Simple,
+    input_channels: u16,
+    output_channels: u16,
+    scratch: Vec<u8>,
 }
 
 #[cfg(target_os = "linux")]
@@ -742,14 +757,15 @@ impl PulseAudioSink {
         use libpulse_binding::sample::{Format, Spec};
         use libpulse_binding::stream::Direction;
 
+        let output_channels = pulse_sink_channel_count(sink_name).unwrap_or(channels);
         let spec = Spec {
             format: Format::S16le,
-            channels: channels as u8,
+            channels: output_channels as u8,
             rate: sample_rate_hz,
         };
         if !spec.is_valid() {
             return Err(anyhow::anyhow!(
-                "invalid pulse sample spec: rate={sample_rate_hz}, channels={channels}"
+                "invalid pulse sample spec: rate={sample_rate_hz}, channels={output_channels}"
             ));
         }
         let simple = libpulse_simple_binding::Simple::new(
@@ -763,15 +779,27 @@ impl PulseAudioSink {
             None,
         )
         .map_err(|err| anyhow::anyhow!("pulse simple init failed: {err}"))?;
-        Ok(Self { simple })
+        Ok(Self {
+            simple,
+            input_channels: channels,
+            output_channels,
+            scratch: Vec::new(),
+        })
     }
 }
 
 #[cfg(target_os = "linux")]
 impl AudioSink for PulseAudioSink {
     fn write_pcm16(&mut self, payload: &[u8]) -> Result<usize> {
+        let write_buf = if self.input_channels == self.output_channels {
+            payload
+        } else {
+            self.scratch =
+                adapt_pcm16_channels(payload, self.input_channels, self.output_channels)?;
+            &self.scratch
+        };
         self.simple
-            .write(payload)
+            .write(write_buf)
             .map_err(|err| anyhow::anyhow!("pulse write failed: {err}"))?;
         Ok(payload.len())
     }
@@ -1280,6 +1308,51 @@ fn source_exists(name: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn pulse_sink_channel_count(name: &str) -> Option<u16> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 || parts[1] != name {
+            continue;
+        }
+        return parts[4].strip_suffix("ch")?.parse::<u16>().ok();
+    }
+    None
+}
+
+fn adapt_pcm16_channels(payload: &[u8], input_channels: u16, output_channels: u16) -> Result<Vec<u8>> {
+    if input_channels == output_channels {
+        return Ok(payload.to_vec());
+    }
+    if input_channels != 1 || output_channels < 1 {
+        return Err(anyhow::anyhow!(
+            "unsupported pcm16 channel adaptation: {input_channels} -> {output_channels}"
+        ));
+    }
+    if payload.len() % 2 != 0 {
+        return Err(anyhow::anyhow!(
+            "pcm16 payload length must be even, got {}",
+            payload.len()
+        ));
+    }
+
+    let mut expanded = Vec::with_capacity(payload.len() * output_channels as usize);
+    for sample in payload.chunks_exact(2) {
+        for _ in 0..output_channels {
+            expanded.extend_from_slice(sample);
+        }
+    }
+    Ok(expanded)
 }
 
 fn source_matches_internal_format(name: &str) -> Result<bool> {
