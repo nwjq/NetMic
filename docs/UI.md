@@ -12,11 +12,15 @@
 ## Release / 打包约定
 - 日常开发可直接运行 `target/<profile>/netmic-ui`；其中 `netmic-server` 与 `netmic-client` 会由 `src-tauri/build.rs` 一并构建到同级目录。
 - 正式打包统一在 `apps/netmic-ui/` 目录执行：`cargo tauri build -c src-tauri/tauri.bundle.conf.json`。
+- 若只想按当前环境一键打包，直接在仓库根目录执行 `scripts/package_release.sh`：
+  - macOS 自动产出 `app,dmg`
+  - Linux 当前自动产出 `deb`
 - 打包后的 GUI 仍保持“一体化应用”体验：UI 负责拉起并管理内置的 `netmic-server`。
 - release bundle 会把 `netmic-server` / `netmic-client` 一并打入应用资源目录：
   - macOS：位于 `.app/Contents/Resources/`
   - Linux：位于 bundle resource 目录（如 AppImage 挂载后的 `usr/lib/<exe_name>/`）
 - 开发态 `tauri.conf.json` 保持 `bundle.active=false`，避免 debug/test 编译被 release 资源路径校验误伤；正式打包再通过 `tauri.bundle.conf.json` 打开 bundle，并由 `scripts/prepare_dist.sh` 生成干净的前端静态目录。
+- 当前 Linux 统一脚本只走 `deb`，不走 `AppImage`，因为远端现场的 `linuxdeploy` 仍会失败。
 - `NETMIC_SERVER_BIN` 仍可覆盖内置路径，主要用于 Harness、现场排障或自定义部署。
 
 ## 视图模型（UiSnapshot）
