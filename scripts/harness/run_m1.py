@@ -141,6 +141,10 @@ cleanup_port_pids() {{
   done
 }}
 
+has_port_owner_tool() {{
+  command -v ss >/dev/null 2>&1 || command -v lsof >/dev/null 2>&1
+}}
+
 describe_port_holders() {{
   if command -v ss >/dev/null 2>&1; then
     ss -lunp 2>/dev/null | grep ':{port}' || true
@@ -177,13 +181,14 @@ PY
 }}
 
 ensure_port_released() {{
-  cleanup_named_processes
   cleanup_port_pids
   for _ in 1 2 3 4 5; do
     if ! port_is_busy; then
       return 0
     fi
-    cleanup_named_processes
+    if ! has_port_owner_tool; then
+      cleanup_named_processes
+    fi
     cleanup_port_pids
     sleep 1
   done
@@ -285,12 +290,18 @@ cleanup_port_pids() {{
   done
 }}
 
+has_port_owner_tool() {{
+  command -v ss >/dev/null 2>&1 || command -v lsof >/dev/null 2>&1
+}}
+
 if [ -f {remote_dir}/server.pid ]; then
   pid="$(cat {remote_dir}/server.pid)"
   stop_pid "$pid"
   rm -f {remote_dir}/server.pid
 fi
-cleanup_named_processes
+if ! has_port_owner_tool; then
+  cleanup_named_processes
+fi
 cleanup_port_pids
 """
     return run_m0.run_remote(env, script)
